@@ -1,10 +1,12 @@
 # Orbit — an AI tutor that follows along with your lecture
 
-Orbit is a study companion that lives on top of recorded lectures (for example, a Panopto recording). While a student watches, Orbit follows the playback position, reads what the professor just said, and answers questions about it. It answers the way the professor taught it, points back to the exact moment in the video, and explains things further when the student needs more.
+> **Status: design stage.** Orbit isn't built yet. This README describes what we plan to build. So far there's a design mockup in Figma, shown over a placeholder lecture recording.
+
+Orbit is a study companion that will live on top of recorded lectures (for example, a Panopto recording). While a student watches, Orbit follows the playback position, reads what the professor just said, and answers questions about it. It answers the way the professor taught it, points back to the exact moment in the video, and can switch into a full lesson with a whiteboard when the student needs to go deeper.
 
 > "Hey! I'm Orbit. I'm following along with this lecture. Ask me anything about what was just said."
 
-![Orbit open over a CSE 368 lecture recording](docs/screenshot.png)
+![Figma design: Orbit open over a CSE 368 lecture recording](docs/screenshot.png)
 
 ---
 
@@ -12,28 +14,40 @@ Orbit is a study companion that lives on top of recorded lectures (for example, 
 
 Recorded lectures are passive. When a student gets lost at minute 7, their options are to rewind and rewatch, search the web (and get an explanation that doesn't match how their professor taught it), or wait for office hours. Orbit gives them a tutor in the moment, grounded in *their* lecture.
 
-## What it does
+## Planned features
 
-### In the current prototype
-- **Floating "Ask Orbit" panel** over the lecture player, which can be minimized so it doesn't block the video.
+### Ask Orbit (quick help while watching)
+- **Floating panel** over the lecture player, which can be minimized so it doesn't block the video.
 - **Follows the playback position.** The header shows where Orbit is in the lecture ("Following at 7:48") and updates as the video plays or the student scrubs.
-- **Context from recent captions.** Each question is answered using a rolling window of the transcript (by default, the last 90 seconds), shown in a banner so the student knows what Orbit is looking at.
+- **Context from recent captions.** Each question is answered using a rolling window of the transcript (for example, the last 90 seconds), shown in a banner so the student knows what Orbit is looking at.
 - **Suggested questions** generated from what was just said (for example, "Explain what a prompt is", "Why use a local model?", "Give me an example").
 - **Chat input** scoped to the current moment: "Ask about what was just said…"
 - **Accuracy reminder** under the input: Orbit can make mistakes, so students should check important details.
 
-### On the roadmap
-- **Whole-lecture knowledge.** Index the full transcript and slide text so Orbit can answer questions about anything in the course, not just the last 90 seconds.
+### Explain in depth (teaching dashboard)
+Quick answers in the panel are good for "what did she just say?" When a student needs to really understand a concept, they choose **Explain in depth** and Orbit opens a **teaching dashboard in a new tab**.
+
+The dashboard is a one-on-one lesson with Professor Orbit:
+
+- **Professor Orbit** walks through the concept step by step, like a professor at office hours, starting from what the lecture covered and building up from there.
+- **Whiteboard.** As Orbit explains, it draws: diagrams, flowcharts, labeled examples, and visuals that build up step by step alongside the explanation, so students can *see* the idea, not just read about it.
+- **Lecture link.** The concept stays tied to the recording, with a reference back to the moment it came up so the student can return to the video.
+- **Keep asking.** Students can interrupt, ask follow-ups, or say "show me another example," and Orbit keeps teaching on the same board.
+
+The dashboard opens already knowing the concept, the lecture, and the timestamp the student came from, so there's nothing to re-explain.
+
+### Later
+- **Whole-lecture knowledge.** Index the full transcript and slide text so Orbit can answer questions about anything in the course, not just the last few minutes.
 - **Timestamp citations.** Every lecture-based answer links to the moment it came from ("explained at 12:03"), and clicking it seeks the video.
-- **Whiteboard.** Orbit draws diagrams, class hierarchies, and step-by-step worked examples on a shared canvas, and the student can draw back.
-- **Voice mode.** Talk to Orbit and hear it answer, with support for interrupting mid-sentence and with drawing synced to speech.
+- **Voice mode.** Talk to Orbit and hear it answer, with support for interrupting mid-sentence and with whiteboard drawing synced to speech.
+- **Shared whiteboard.** Students can draw on the board too, so Orbit can react to their sketches.
 - **Code sandbox** for running and modifying examples during CS lectures.
 - **Quizzes and mastery tracking**, generated from lecture content.
 - **Professor controls.** Instructors can review what Orbit knows, add notes on common misconceptions, and set rules such as "guide students on homework, don't give answers."
 
 ---
 
-## How it works
+## How it will work
 
 ```
  Lecture recording (Panopto)
@@ -47,57 +61,36 @@ Recorded lectures are passive. When a student gets lost at minute 7, their optio
         │  general knowledge clearly labeled as extra
         ▼
  Ask Orbit panel (chat, suggested questions)
+        │  "Explain in depth"
+        ▼
+ Teaching dashboard (new tab)
+   ├── Professor Orbit: step-by-step lesson
+   └── Whiteboard: diagrams drawn as Orbit explains
 ```
 
 1. **Playback sync.** Orbit reads the player's current time.
-2. **Context window.** It collects caption lines from the last 90 seconds before the playhead.
+2. **Context window.** It collects caption lines from the recent stretch before the playhead.
 3. **Answering.** The question and that context go to the model, with instructions to explain using the professor's own framing and examples, and to say clearly when it is going beyond what the lecture covered.
-4. **Suggestions.** After the context changes, Orbit proposes a few follow-up questions about the current segment.
+4. **Suggestions.** When the context changes, Orbit proposes a few follow-up questions about the current segment.
+5. **Going deeper.** Choosing "Explain in depth" opens the teaching dashboard in a new tab, passing along the concept, the lecture, and the timestamp. There, Orbit plans a short lesson and draws on the whiteboard step by step as it explains each part.
 
 ### Design principles
 - **Lecture first.** Professors teach the same concept in different ways. Orbit should reinforce how *this* professor taught it, not contradict it.
 - **Teach, don't just answer.** Check understanding, give an example, and offer a follow-up question.
 - **Be transparent.** Always show what context Orbit used and where an answer came from.
-- **Stay out of the way.** The video is still the main thing on screen.
+- **Stay out of the way.** In the panel, the video is still the main thing on screen. The dashboard is where Orbit takes center stage.
 
 ---
 
-## Tech stack
+## Current progress
 
-- **React + TypeScript** (`src/App.tsx`)
-- **CSS** for styling (`src/index.css`)
-- **pnpm** for package management
-- Initial UI designed and prototyped in **Figma Make**
-
-In this prototype, the Panopto player, captions, and lecture content are mocked inside the app. A production version would connect to the real recording and caption track.
-
-## Getting started
-
-Requirements: Node.js and pnpm.
-
-```bash
-pnpm install     # install dependencies
-pnpm dev         # start the local dev server
-pnpm build       # production build
-pnpm format      # format the code
-```
-
-## Project structure
-
-```
-src/
-├── App.tsx      # lecture player mock, transcript, and the Ask Orbit panel
-└── index.css    # styles
-```
-
-## Configuration
-
-| Setting | Default | What it controls |
-|---|---|---|
-| Caption window | 90 seconds | How much recent transcript Orbit uses as context |
-| Suggested questions | 3 | How many follow-up chips are shown |
-
----
+- [x] UI design for the Ask Orbit panel over a lecture recording (Figma)
+- [ ] UI design for the Explain in depth dashboard
+- [ ] Choose the tech stack and model provider
+- [ ] Caption sync with a lecture player
+- [ ] Ask Orbit panel
+- [ ] Teaching dashboard and whiteboard
+- [ ] Pilot with a real course
 
 ## Privacy and responsible use
 
@@ -108,7 +101,7 @@ src/
 
 ## Demo context
 
-The screenshots show Orbit over a mock recording of **CSE 368: Artificial Intelligence** at the University at Buffalo, during an in-class activity on building a job description analyzer (input → prompt → structured output). The course content is used for demonstration only.
+The design shows Orbit over a mock recording of **CSE 368: Artificial Intelligence** at the University at Buffalo, during an in-class activity on building a job description analyzer (input → prompt → structured output). The course content is used for demonstration only.
 
 ## License
 

@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "An AI tutor that follows along with your Panopto lecture. Ask about what was just said.",
   "permissions": ["storage", "tabs"],
-  "host_permissions": ["https://*.panopto.com/*", "http://localhost:8000/*"],
+  "host_permissions": ["https://*.panopto.com/*", "http://localhost:8000/*", "https://*.railway.app/*"],
   "background": {
     "service_worker": "background.js"
   },

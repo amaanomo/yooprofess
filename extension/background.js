@@ -15,7 +15,7 @@
 // ============================================================================
 
 /** Person 2's server. If you change it, update "host_permissions" in manifest.json too. */
-const BACKEND_URL = "http://localhost:8000";
+const BACKEND_URL = "https://yooprofess-production.up.railway.app";
 
 /**
  * true: don't call the backend. /lectures is skipped and /ask gets a canned

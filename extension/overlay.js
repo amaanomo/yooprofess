@@ -131,6 +131,7 @@
         onDownload() {},
         onReloadCaptions() {},
         onClearChat() {},
+        onSeek() {},
       },
       opts
     );
@@ -298,6 +299,18 @@
       const role = msg.role === "student" ? "student" : "orbit";
       const bubble = h("div", { class: "bubble" }, h("span", { class: "bubble-text", text: msg.text }));
       if (msg.stub) bubble.append(h("span", { class: "tag", text: "Demo reply (stub mode)" }));
+      if (msg.watch) {
+        const { start, end, label } = msg.watch;
+        const fmt = root.OrbitSRT ? root.OrbitSRT.formatTime : (t) => String(Math.floor(t));
+        const timeStr = end && end !== start ? `${fmt(start)} – ${fmt(end)}` : fmt(start);
+        const watchBtn = h(
+          "button",
+          { class: "watch-btn", type: "button", onclick: () => o.onSeek(start) },
+          h("span", { class: "watch-btn-time", text: `▶ ${timeStr}` }),
+          label ? h("span", { class: "watch-btn-label", text: label }) : null
+        );
+        bubble.append(watchBtn);
+      }
       const row = h("div", { class: `msg msg--${role}${msg.error ? " msg--error" : ""}` });
       if (role === "orbit") row.append(avatar("sm"));
       row.append(bubble);

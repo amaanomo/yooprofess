@@ -87,7 +87,7 @@
 
   const log = (...args) => console.log("[Orbit]", ...args);
   const warn = (...args) => console.warn("[Orbit]", ...args);
-  const { parseSRT, captionWindow, formatTime } = globalThis.OrbitSRT;
+  const { parseSRT, captionWindow, formatTime, parseTimestamp } = globalThis.OrbitSRT;
 
   function getLectureId() {
     for (const [key, value] of new URLSearchParams(location.search)) {
@@ -128,6 +128,7 @@
       onDownload: downloadJson,
       onReloadCaptions: () => loadCaptions({ force: true }),
       onClearChat: clearChat,
+      onSeek: seekTo,
     });
 
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -458,6 +459,27 @@
   // Part 4: chat
   // ===========================================================================
 
+  function seekTo(seconds) {
+    const v = state.video;
+    if (v && v.isConnected && Number.isFinite(seconds)) {
+      v.currentTime = seconds;
+    }
+  }
+
+  // Extract "Watch: M:SS-M:SS, description" from an Orbit reply.
+  // Returns { clean: text without watch line, watch: { start, end, label } | null }.
+  function parseWatch(text) {
+    const match = text.match(/\nWatch:\s*([^\n]+)/i) || text.match(/^Watch:\s*([^\n]+)/im);
+    if (!match) return { clean: text, watch: null };
+    const clean = text.replace(match[0], "").trim();
+    const timeMatch = match[1].trim().match(/^([\d:]+)\s*[-–]\s*([\d:]+)(?:[,.]?\s*(.+))?/);
+    if (!timeMatch) return { clean: text, watch: null };
+    const start = parseTimestamp(timeMatch[1]);
+    const end = parseTimestamp(timeMatch[2]);
+    if (!Number.isFinite(start)) return { clean: text, watch: null };
+    return { clean, watch: { start, end: Number.isFinite(end) ? end : start, label: timeMatch[3] ? timeMatch[3].trim() : "" } };
+  }
+
   async function ask(question) {
     if (state.busy) return;
     const lectureId = state.lectureId;
@@ -493,7 +515,8 @@
       });
       return;
     }
-    const msg = { role: "orbit", text: reply, at: Date.now() };
+    const { clean, watch } = parseWatch(reply);
+    const msg = { role: "orbit", text: clean, watch, at: Date.now() };
     if (res.stub) msg.stub = true;
     saveMessage(msg);
     overlay.addMessage(msg);

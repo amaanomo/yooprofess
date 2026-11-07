@@ -2,7 +2,7 @@
 
 > **Status: design stage.** Orbit isn't built yet. This README describes what we plan to build. So far there's a design mockup in Figma, shown over a placeholder lecture recording.
 
-Orbit is a study companion that will live on top of recorded lectures (for example, a Panopto recording). While a student watches, Orbit follows the playback position, reads what the professor just said, and answers questions about it. It answers the way the professor taught it, points back to the exact moment in the video, and can switch into a full lesson with a whiteboard when the student needs to go deeper.
+Orbit is a study companion that will live on top of recorded lectures (for example, a Panopto recording). While a student watches, Orbit follows the playback position, reads what the professor just said, and answers questions about it. It draws on the lecture, the professor's framing, and live web knowledge — all at once — and can switch into a full lesson with a whiteboard when the student needs to go deeper.
 
 > "Hey! I'm Orbit. I'm following along with this lecture. Ask me anything about what was just said."
 
@@ -12,24 +12,35 @@ Orbit is a study companion that will live on top of recorded lectures (for examp
 
 ## The problem
 
-Recorded lectures are passive. When a student gets lost at minute 7, their options are to rewind and rewatch, search the web (and get an explanation that doesn't match how their professor taught it), or wait for office hours. Orbit gives them a tutor in the moment, grounded in *their* lecture.
+Recorded lectures are passive. When a student gets lost at minute 7, their options are to rewind and rewatch, search the web (and get an explanation that doesn't match how their professor taught it), or wait for office hours. Orbit gives them a tutor in the moment, grounded in *their* lecture — but with the full knowledge of the subject behind it.
 
 ## Planned features
 
 ### Ask Orbit (quick help while watching)
 - **Floating panel** over the lecture player, which can be minimized so it doesn't block the video.
 - **Follows the playback position.** The header shows where Orbit is in the lecture ("Following at 7:48") and updates as the video plays or the student scrubs.
-- **Context from recent captions.** Each question is answered using a rolling window of the transcript (for example, the last 90 seconds), shown in a banner so the student knows what Orbit is looking at.
+- **Blended answers.** Every response combines what the professor said with broad subject knowledge and live web research — all clearly labeled. Orbit doesn't limit itself to the last 90 seconds; it knows the field the way a good tutor would.
+- **Source labels.** Each answer shows where it came from: *"Your professor covered this at 7:48 →"* for lecture content, clearly separated from general or web-sourced knowledge.
 - **Suggested questions** generated from what was just said (for example, "Explain what a prompt is", "Why use a local model?", "Give me an example").
 - **Chat input** scoped to the current moment: "Ask about what was just said…"
 - **Accuracy reminder** under the input: Orbit can make mistakes, so students should check important details.
+
+### Timestamp search
+Students can ask natural questions like *"where did he talk about recursion?"* and Orbit searches the full lecture transcript, finds every mention, and returns a priority list:
+
+> "He covered this in 3 places:
+> **→ 7:48** *(most relevant — full explanation)*
+> → 12:03 *(brief mention)*
+> → 24:15 *(example walkthrough)*"
+
+Each result is a clickable button that seeks the video to that exact moment. The most relevant timestamp is highlighted at the top.
 
 ### Explain in depth (teaching dashboard)
 Quick answers in the panel are good for "what did she just say?" When a student needs to really understand a concept, they choose **Explain in depth** and Orbit opens a **teaching dashboard in a new tab**.
 
 The dashboard is a one-on-one lesson with Professor Orbit:
 
-- **Professor Orbit** walks through the concept step by step, like a professor at office hours, starting from what the lecture covered and building up from there.
+- **Professor Orbit** walks through the concept step by step, like a professor at office hours, starting from what the lecture covered and building up from there using full subject knowledge and live web research.
 - **Whiteboard.** As Orbit explains, it draws: diagrams, flowcharts, labeled examples, and visuals that build up step by step alongside the explanation, so students can *see* the idea, not just read about it.
 - **Lecture link.** The concept stays tied to the recording, with a reference back to the moment it came up so the student can return to the video.
 - **Keep asking.** Students can interrupt, ask follow-ups, or say "show me another example," and Orbit keeps teaching on the same board.
@@ -37,8 +48,6 @@ The dashboard is a one-on-one lesson with Professor Orbit:
 The dashboard opens already knowing the concept, the lecture, and the timestamp the student came from, so there's nothing to re-explain.
 
 ### Later
-- **Whole-lecture knowledge.** Index the full transcript and slide text so Orbit can answer questions about anything in the course, not just the last few minutes.
-- **Timestamp citations.** Every lecture-based answer links to the moment it came from ("explained at 12:03"), and clicking it seeks the video.
 - **Voice mode.** Talk to Orbit and hear it answer, with support for interrupting mid-sentence and with whiteboard drawing synced to speech.
 - **Shared whiteboard.** Students can draw on the board too, so Orbit can react to their sketches.
 - **Code sandbox** for running and modifying examples during CS lectures.
@@ -49,35 +58,65 @@ The dashboard opens already knowing the concept, the lecture, and the timestamp 
 
 ## How it will work
 
+### Multi-agent architecture
+
+Orbit runs five specialized agents that work in parallel, each with a distinct job:
+
 ```
  Lecture recording (Panopto)
         │  playback time + captions
         ▼
- Caption window ──► last N seconds of transcript around the playhead
-        │
-        ▼
- Orbit tutor (LLM) ◄── student question
-        │  answer grounded in the lecture first,
-        │  general knowledge clearly labeled as extra
-        ▼
- Ask Orbit panel (chat, suggested questions)
-        │  "Explain in depth"
-        ▼
- Teaching dashboard (new tab)
-   ├── Professor Orbit: step-by-step lesson
-   └── Whiteboard: diagrams drawn as Orbit explains
+ ┌─────────────────────────────────────────────────┐
+ │  The Listener                                   │
+ │  Passive mode: rolling caption window           │
+ │  Active mode: full-transcript search            │
+ │  → surfaces context + ranked timestamps         │
+ └───────────────────┬─────────────────────────────┘
+                     │
+          ┌──────────┴──────────┐
+          ▼                     ▼
+ ┌────────────────┐   ┌──────────────────────┐
+ │ The Researcher │   │   The Answerer        │
+ │ Live web search│   │ Blends lecture +      │
+ │ on the topic   │   │ web into one response │
+ └────────────────┘   └──────────┬───────────┘
+                                 │
+                                 ▼
+                      ┌──────────────────────┐
+                      │  The Fact-Checker     │
+                      │ Flags anything that   │
+                      │ contradicts the       │
+                      │ professor's framing   │
+                      └──────────┬───────────┘
+                                 │
+                    Ask Orbit panel (chat, timestamps,
+                    suggested questions)
+                                 │  "Explain in depth"
+                                 ▼
+                      ┌──────────────────────┐
+                      │    The Teacher        │
+                      │ Plans a full lesson,  │
+                      │ directs the whiteboard│
+                      └──────────────────────┘
 ```
 
-1. **Playback sync.** Orbit reads the player's current time.
-2. **Context window.** It collects caption lines from the recent stretch before the playhead.
-3. **Answering.** The question and that context go to the model, with instructions to explain using the professor's own framing and examples, and to say clearly when it is going beyond what the lecture covered.
-4. **Suggestions.** When the context changes, Orbit proposes a few follow-up questions about the current segment.
-5. **Going deeper.** Choosing "Explain in depth" opens the teaching dashboard in a new tab, passing along the concept, the lecture, and the timestamp. There, Orbit plans a short lesson and draws on the whiteboard step by step as it explains each part.
+**The Listener** tracks the playhead and manages two modes:
+- *Passive* — rolling caption window following playback in real time
+- *Active* — full-transcript search when a student asks "where did he talk about X?", returning a ranked list of timestamps
+
+**The Researcher** runs in parallel the moment a question comes in. It does a live web search on the topic — completely independent from the lecture — so Orbit knows the subject as a field, not just what the professor said in the last few minutes.
+
+**The Answerer** receives both feeds simultaneously: the lecture context from the Listener and the web knowledge from the Researcher. It blends them into one response, clearly labeling what came from the lecture (with a timestamp button) versus broader knowledge.
+
+**The Fact-Checker** runs after the Answerer. It compares the response against the actual transcript and flags anything that contradicts how the professor taught it specifically, reinforcing the lecture-first principle without limiting the answer.
+
+**The Teacher** takes over when a student clicks "Explain in depth." It has access to the lecture, the timestamp, and the Researcher's web knowledge — so it can plan a full lesson that starts where the professor left off and builds from there.
 
 ### Design principles
 - **Lecture first.** Professors teach the same concept in different ways. Orbit should reinforce how *this* professor taught it, not contradict it.
+- **Full subject knowledge.** Being grounded in the lecture doesn't mean being limited to it. Orbit knows the field and uses live web research to give complete answers.
 - **Teach, don't just answer.** Check understanding, give an example, and offer a follow-up question.
-- **Be transparent.** Always show what context Orbit used and where an answer came from.
+- **Be transparent.** Always show what context Orbit used and where an answer came from — lecture timestamp, general knowledge, or web source.
 - **Stay out of the way.** In the panel, the video is still the main thing on screen. The dashboard is where Orbit takes center stage.
 
 ---
@@ -89,6 +128,8 @@ The dashboard opens already knowing the concept, the lecture, and the timestamp 
 - [ ] Choose the tech stack and model provider
 - [ ] Caption sync with a lecture player
 - [ ] Ask Orbit panel
+- [ ] Multi-agent pipeline (Listener, Researcher, Answerer, Fact-Checker, Teacher)
+- [ ] Timestamp search with ranked results
 - [ ] Teaching dashboard and whiteboard
 - [ ] Pilot with a real course
 

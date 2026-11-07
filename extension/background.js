@@ -22,7 +22,7 @@ const BACKEND_URL = "http://localhost:8000";
  * guiding reply, so the UI can be demoed without a server.
  * false: send real requests to BACKEND_URL.
  */
-const STUB_MODE = true;
+const STUB_MODE = false;
 
 const TIMEOUT_MS = { lectures: 20000, ask: 45000 };
 

@@ -2,7 +2,7 @@
 
 This folder is the Chrome extension half of Orbit. It detects a Panopto lecture, pulls its captions with the student's own Panopto session, follows the video's playback time, and shows the "Ask Orbit" card on the page. The AI, the backend and the professor dashboard live elsewhere (Person 2).
 
-Plain JavaScript, HTML and CSS. No framework, no build step.
+Plain JavaScript, HTML and CSS. No framework, no build step. **New to this? Follow [INSTALL.md](INSTALL.md) for step-by-step install instructions.**
 
 ```
 extension/

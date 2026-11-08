@@ -90,6 +90,7 @@
       fatal: null,
       micStream: null, // echo-cancelled mic track for recognition
       micTried: false,
+      noPhrases: false, // Chrome rejected vocabulary hints (cloud recognition): stop sending them
     };
 
     function status(state, detail = "") {
@@ -134,7 +135,7 @@
       rec.lang = h.lang || navigator.language || "en-US";
       try {
         // Contextual biasing (newer Chrome); silently skipped elsewhere.
-        if ("phrases" in rec && root.SpeechRecognitionPhrase) {
+        if (!s.noPhrases && "phrases" in rec && root.SpeechRecognitionPhrase) {
           rec.phrases = HINT_PHRASES.map((p) => new root.SpeechRecognitionPhrase(p, 5));
         }
       } catch (_) {
@@ -151,6 +152,12 @@
       rec.onerror = (event) => {
         const err = event.error;
         if (err === "no-speech" || err === "aborted") return; // normal; onend restarts
+        if (err === "phrases-not-supported") {
+          // Vocabulary hints only work with on-device recognition. Retry without them.
+          s.noPhrases = true;
+          console.info("[Nova] Speech hints aren't supported here; listening without them.");
+          return;
+        }
         console.warn("[Nova] speech recognition error:", err, event.message || "");
         if (err === "not-allowed" || err === "service-not-allowed" || err === "audio-capture" || err === "language-not-supported") {
           s.fatal = err; // don't hammer Chrome with retries; the student has to fix it

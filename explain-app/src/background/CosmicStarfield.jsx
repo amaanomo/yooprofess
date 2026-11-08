@@ -77,20 +77,20 @@ export default function CosmicStarfield() {
     }
 
     // ── Meteors ────────────────────────────────────────────────────────────
-    let meteor = null
-    let nextMeteor = Date.now() + 800 + Math.random() * 800
+    const meteors = []
+    let nextMeteor = Date.now() + 400 + Math.random() * 600
 
     function spawnMeteor() {
       const angle = (18 + Math.random() * 28) * (Math.PI / 180)
-      meteor = {
-        x: Math.random() * canvas.width * 0.8,
-        y: Math.random() * canvas.height * 0.3,
+      meteors.push({
+        x: Math.random() * canvas.width * 0.9,
+        y: Math.random() * canvas.height * 0.35,
         angle,
         length: 130 + Math.random() * 110,
         headR: 2 + Math.random() * 2,
         duration: 550 + Math.random() * 150,
         startTime: Date.now(),
-      }
+      })
     }
 
     // ── Resize ─────────────────────────────────────────────────────────────
@@ -207,52 +207,51 @@ export default function CosmicStarfield() {
         ctx.restore()
       }
 
-      // ── Meteor ──
-      if (!meteor && now >= nextMeteor) {
+      // ── Meteors ──
+      if (now >= nextMeteor) {
         spawnMeteor()
-        nextMeteor = now + 800 + Math.random() * 1200
+        nextMeteor = now + 400 + Math.random() * 800
       }
-      if (meteor) {
+      for (let mi = meteors.length - 1; mi >= 0; mi--) {
+        const meteor = meteors[mi]
         const elapsed = now - meteor.startTime
         const t = Math.min(elapsed / meteor.duration, 1)
-        if (t >= 1) {
-          meteor = null
-        } else {
-          const fade = t < 0.35 ? t / 0.35 : (1 - t) / 0.65
-          const cos = Math.cos(meteor.angle), sin = Math.sin(meteor.angle)
-          const hx = meteor.x + cos * meteor.length * t
-          const hy = meteor.y + sin * meteor.length * t
-          const tx = hx - cos * meteor.length * 0.45
-          const ty = hy - sin * meteor.length * 0.45
+        if (t >= 1) { meteors.splice(mi, 1); continue }
 
-          // Trail
-          const trail = ctx.createLinearGradient(tx, ty, hx, hy)
-          trail.addColorStop(0,   'rgba(103, 232, 249, 0)')
-          trail.addColorStop(0.5, `rgba(103, 232, 249, ${(fade * 0.4).toFixed(3)})`)
-          trail.addColorStop(1,   `rgba(255, 255, 255,  ${(fade * 0.85).toFixed(3)})`)
-          ctx.beginPath()
-          ctx.moveTo(tx, ty)
-          ctx.lineTo(hx, hy)
-          ctx.strokeStyle = trail
-          ctx.lineWidth = 1.8
-          ctx.stroke()
+        const fade = t < 0.35 ? t / 0.35 : (1 - t) / 0.65
+        const cos = Math.cos(meteor.angle), sin = Math.sin(meteor.angle)
+        const hx = meteor.x + cos * meteor.length * t
+        const hy = meteor.y + sin * meteor.length * t
+        const tx = hx - cos * meteor.length * 0.45
+        const ty = hy - sin * meteor.length * 0.45
 
-          // Glow halo
-          const halo = ctx.createRadialGradient(hx, hy, 0, hx, hy, meteor.headR * 4)
-          halo.addColorStop(0,   `rgba(255, 255, 255, ${(fade * 0.95).toFixed(3)})`)
-          halo.addColorStop(0.3, `rgba(103, 232, 249, ${(fade * 0.6).toFixed(3)})`)
-          halo.addColorStop(1,   'rgba(103, 232, 249, 0)')
-          ctx.beginPath()
-          ctx.arc(hx, hy, meteor.headR * 4, 0, Math.PI * 2)
-          ctx.fillStyle = halo
-          ctx.fill()
+        // Trail
+        const trail = ctx.createLinearGradient(tx, ty, hx, hy)
+        trail.addColorStop(0,   'rgba(103, 232, 249, 0)')
+        trail.addColorStop(0.5, `rgba(103, 232, 249, ${(fade * 0.4).toFixed(3)})`)
+        trail.addColorStop(1,   `rgba(255, 255, 255,  ${(fade * 0.85).toFixed(3)})`)
+        ctx.beginPath()
+        ctx.moveTo(tx, ty)
+        ctx.lineTo(hx, hy)
+        ctx.strokeStyle = trail
+        ctx.lineWidth = 1.8
+        ctx.stroke()
 
-          // Bright core
-          ctx.beginPath()
-          ctx.arc(hx, hy, meteor.headR * 0.6, 0, Math.PI * 2)
-          ctx.fillStyle = `rgba(255, 255, 255, ${fade})`
-          ctx.fill()
-        }
+        // Glow halo
+        const halo = ctx.createRadialGradient(hx, hy, 0, hx, hy, meteor.headR * 4)
+        halo.addColorStop(0,   `rgba(255, 255, 255, ${(fade * 0.95).toFixed(3)})`)
+        halo.addColorStop(0.3, `rgba(103, 232, 249, ${(fade * 0.6).toFixed(3)})`)
+        halo.addColorStop(1,   'rgba(103, 232, 249, 0)')
+        ctx.beginPath()
+        ctx.arc(hx, hy, meteor.headR * 4, 0, Math.PI * 2)
+        ctx.fillStyle = halo
+        ctx.fill()
+
+        // Bright core
+        ctx.beginPath()
+        ctx.arc(hx, hy, meteor.headR * 0.6, 0, Math.PI * 2)
+        ctx.fillStyle = `rgba(255, 255, 255, ${fade})`
+        ctx.fill()
       }
 
       rafId = requestAnimationFrame(draw)

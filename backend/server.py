@@ -1,7 +1,9 @@
 """
 Minimal Orbit backend for local testing.
 
-    export ANTHROPIC_API_KEY=sk-ant-...
+    export ANTHROPIC_API_KEY=sk-ant-...   # for Claude (default)
+    export ORBIT_PROVIDER=gemini          # switch to Gemini
+    export GOOGLE_API_KEY=...             # required when using Gemini
     python3 backend/server.py
 
 Endpoints (see the "Backend contract" in extension/content.js):
@@ -12,11 +14,17 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import anthropic
-
-MODEL = os.environ.get("ORBIT_MODEL", "claude-sonnet-5-5")
+PROVIDER = os.environ.get("ORBIT_PROVIDER", "anthropic")
 PORT = int(os.environ.get("PORT", "8000"))
-client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
+
+if PROVIDER == "gemini":
+    import google.generativeai as genai
+    genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
+    MODEL = os.environ.get("ORBIT_MODEL", "gemini-2.0-flash")
+else:
+    import anthropic
+    client = anthropic.Anthropic()
+    MODEL = os.environ.get("ORBIT_MODEL", "claude-sonnet-4-6")
 
 LECTURES = {}  # lecture_id -> {"title": str, "captions": [...]}
 
@@ -66,19 +74,22 @@ def ask(body):
         transcript = transcript_text(body.get("context") or [])
         title = "(unknown)"
     now = fmt(body.get("current_time") or 0)
-    msg = client.messages.create(
-        model=MODEL,
-        max_tokens=600,
-        system=[{"type": "text", "text": SYSTEM}],
-        messages=[
-            {
-                "role": "user",
-                "content": f"Lecture: {title}\n\nTranscript:\n{transcript}\n\n"
-                f"The student is paused at {now}.\nQuestion: {body.get('question', '')}",
-            }
-        ],
+    user_msg = (
+        f"Lecture: {title}\n\nTranscript:\n{transcript}\n\n"
+        f"The student is paused at {now}.\nQuestion: {body.get('question', '')}"
     )
-    return "".join(b.text for b in msg.content if b.type == "text").strip()
+    if PROVIDER == "gemini":
+        gmodel = genai.GenerativeModel(MODEL, system_instruction=SYSTEM)
+        response = gmodel.generate_content(user_msg)
+        return response.text.strip()
+    else:
+        msg = client.messages.create(
+            model=MODEL,
+            max_tokens=600,
+            system=[{"type": "text", "text": SYSTEM}],
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        return "".join(b.text for b in msg.content if b.type == "text").strip()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -120,5 +131,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"Orbit backend on http://localhost:{PORT} using {MODEL}")
+    print(f"Orbit backend on http://localhost:{PORT} using {PROVIDER}/{MODEL}")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

@@ -279,7 +279,8 @@
       progress,
       h("p", { class: "sub-foot", text: "Panopto's own captions stay as they are; use its CC button." })
     );
-    const contextStrip = h("div", { class: "context" }, icon("captions"), contextText, subBtn, pop);
+    // The banner text is gone, but the strip stays: it holds the subtitles button and popover.
+    const contextStrip = h("div", { class: "context" }, h("span", { class: "ctx-text" }), subBtn, pop);
 
     function setPopOpen(open) {
       pop.hidden = !open;
@@ -382,6 +383,7 @@
       "section",
       { class: "card", role: "dialog", "aria-label": "Ask Nova" },
       header,
+      contextStrip,
       messages,
       chips,
       composer,

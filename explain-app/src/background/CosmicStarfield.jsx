@@ -16,11 +16,11 @@ export default function CosmicStarfield() {
     window.addEventListener('resize', resize)
 
     // Create stars
-    const stars = Array.from({ length: 180 }, () => ({
+    const stars = Array.from({ length: 300 }, () => ({
       x: Math.random() * canvas.width,
       y: Math.random() * canvas.height,
-      r: 0.5 + Math.random() * 2,
-      opacity: 0.3 + Math.random() * 0.7,
+      r: 0.4 + Math.random() * 2.5,
+      opacity: 0.5 + Math.random() * 0.5,
       speed: 0.3 + Math.random() * 0.7,
       phase: Math.random() * Math.PI * 2,
     }))
@@ -33,14 +33,14 @@ export default function CosmicStarfield() {
       const startX = Math.random() * canvas.width
       const startY = Math.random() * (canvas.height * 0.35)
       const angle = (20 + Math.random() * 25) * (Math.PI / 180)
-      const length = 80 + Math.random() * 60
+      const length = 120 + Math.random() * 100
       shooting = {
         x: startX,
         y: startY,
         angle,
         length,
         progress: 0,
-        duration: 500,
+        duration: 600,
         startTime: Date.now(),
       }
     }
@@ -53,7 +53,7 @@ export default function CosmicStarfield() {
       // Draw stars
       for (const s of stars) {
         s.phase += 0.012 * s.speed
-        const twinkle = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(s.phase))
+        const twinkle = 0.6 + 0.4 * (0.5 + 0.5 * Math.sin(s.phase))
         ctx.beginPath()
         ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2)
         ctx.fillStyle = `rgba(240, 230, 255, ${(s.opacity * twinkle).toFixed(3)})`
@@ -78,7 +78,7 @@ export default function CosmicStarfield() {
           const tailY = headY - Math.sin(shooting.angle) * shooting.length * 0.35
           const grad = ctx.createLinearGradient(tailX, tailY, headX, headY)
           grad.addColorStop(0, `rgba(103, 232, 249, 0)`)
-          grad.addColorStop(1, `rgba(103, 232, 249, ${(fade * 0.9).toFixed(3)})`)
+          grad.addColorStop(1, `rgba(103, 232, 249, ${(fade * 1.0).toFixed(3)})`)
           ctx.beginPath()
           ctx.moveTo(tailX, tailY)
           ctx.lineTo(headX, headY)

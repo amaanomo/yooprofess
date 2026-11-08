@@ -234,7 +234,25 @@
 
   // What Chrome tends to hear for "Hey Nova".
   const WAKE_RE = /\b(?:hey|hi|hay|heh|ok|okay|yo|yoh|you|yeah)[\s,.!-]*(?:nova|novah|nover|nava|innova|noah)\b[\s,.!?-]*/i;
-  const QUESTION_WAIT_MS = 7000; // after "Hey Nova" with nothing else, wait this long for the question
+  // Chrome may rewrite "hey nova" ("hangover") or split it ("hey" + "Nova"): strip
+  // leftover wake words from the question, never wake on them (same as spotter.js).
+  const WAKE_WORDS = new Set(
+    "hey hi hay heh ok okay yo yoh you yeah nova novah nover nava innova noah hangover hang hand and over a no va vah nov nove novo nora heynova hennova".split(" ")
+  );
+  const QUESTION_WAIT_MS = 10000; // after "Hey Nova" with nothing else, wait this long for the question
+
+  function stripWake(t) {
+    const m = WAKE_RE.exec(t);
+    if (m) return t.slice(m.index + m[0].length);
+    return t.trim().split(/\s+/).length <= 2 ? "" : t;
+  }
+
+  function stripLeadingWake(text) {
+    const words = text.split(" ");
+    let k = 0;
+    while (k < words.length && k < 4 && WAKE_WORDS.has(words[k].toLowerCase().replace(/[^a-z]/g, ""))) k++;
+    return words.slice(k).join(" ");
+  }
 
   function startSpotter() {
     const spot = state.spot;
@@ -352,14 +370,12 @@
     let allFinal = true;
     for (let i = spot.qFrom.index; i < results.length; i++) {
       let t = results[i][0].transcript;
-      if (i === spot.qFrom.index && spot.qFrom.wake) {
-        const m = WAKE_RE.exec(t);
-        t = m ? t.slice(m.index + m[0].length) : t;
-      }
+      if (i === spot.qFrom.index && spot.qFrom.wake) t = stripWake(t);
       text += " " + t;
       if (!results[i].isFinal) allFinal = false;
     }
     text = text.replace(/\s+/g, " ").trim();
+    if (spot.qFrom.wake) text = stripLeadingWake(text);
     if (text) send("NOVA_INTERIM", { text });
     if (allFinal && text) {
       // Chrome finalizes a result after a short pause: that's the end of the question.

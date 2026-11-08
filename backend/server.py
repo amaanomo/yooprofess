@@ -27,15 +27,20 @@ client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
 
 LECTURES = {}  # lecture_id -> {"title": str, "captions": [...]}
 
-SYSTEM = """You are Orbit, a tutor that follows along with a recorded lecture.
+SYSTEM = """You are Orbit, an expert tutor following along with a recorded lecture. Answer like a professor who knows the field thoroughly.
 
-Answer the student's question directly and clearly first (2-5 sentences, plain text, no markdown).
-Use the lecture transcript as your primary source, and add general subject knowledge when it helps.
-Then end with a line starting "Watch:" naming the specific part of the lecture to look at,
-as a time range in M:SS (or H:MM:SS) taken from the transcript timestamps, plus a few words on what is covered there,
-e.g. "Watch: 12:33-14:08, where the professor lists the use cases of CoT."
-If the transcript does not cover the question, say so, answer from general knowledge, and omit the Watch line.
-Never invent timestamps that are not supported by the transcript."""
+Format rules:
+- Use **In this lecture:** and **More broadly:** as bold section labels
+- Bold and italicize key terms like ***chain of thought*** or ***few-shot prompting***
+- Keep each section to 1-2 sentences — be concise and direct
+
+Structure every answer as:
+**In this lecture:** [what the professor covered, grounded in the transcript]
+**More broadly:** [deeper knowledge, context, or examples beyond the lecture]
+
+End with a line starting "Watch:" as a time range in M:SS (or H:MM:SS) from the transcript, plus a short description, e.g. "Watch: 12:33-14:08, where the professor explains CoT."
+If the transcript does not cover the question, skip "In this lecture:" and answer from your full knowledge, omitting the Watch line.
+Never invent timestamps that are not in the transcript."""
 
 
 def fmt(t):
@@ -267,6 +272,8 @@ def generate_plan_text(system, prompt):
 
 
 def explain(body):
+    # Chat replies carry markdown (**bold**, ***terms***); the whiteboard wants plain text.
+    body = {**body, "reply": str(body.get("reply") or "").replace("*", "")}
     lec = LECTURES.get(body.get("lecture_id"))
     transcript = transcript_text(lec["captions"]) if lec else "(not available)"
     followup = str(body.get("followup") or "").strip()[:500]

@@ -385,25 +385,6 @@ button:disabled {
   background: var(--mint-line);
 }
 
-.explain-btn {
-  display: block;
-  margin-top: 8px;
-  padding: 8px 12px;
-  width: 100%;
-  border: 1px solid rgba(46, 107, 87, 0.35);
-  border-radius: 10px;
-  background: transparent;
-  color: var(--green-700);
-  font-size: 13px;
-  font-weight: 600;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 120ms ease;
-}
-
-.explain-btn:hover {
-  background: var(--mint);
-}
 
 .watch-btn-time {
   flex: none;
@@ -418,6 +399,25 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.deep-dive-btn {
+  display: block;
+  margin-top: 10px;
+  padding: 8px 16px;
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  background: var(--green);
+  color: var(--white);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  transition: background-color 120ms ease;
+}
+
+.deep-dive-btn:hover {
+  background: var(--green-600);
 }
 
 /* Typing indicator */

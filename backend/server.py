@@ -14,6 +14,7 @@ Endpoints (see the "Backend contract" in extension/content.js):
   POST /lectures   store the full caption list for a lecture
   POST /ask        answer the question, then say which part of the lecture to watch
   POST /translate  translate a batch of caption cues for the subtitle overlay
+  POST /summary    summary, key points and timestamped chapters for a lecture
 """
 import base64
 import json
@@ -250,6 +251,76 @@ def translate(body, model_translate=_model_translate):
             out.append({"i": c["i"], "text": c["text"], "fallback": True})
     print(f"translated {lecture_id} -> {code}: {len(cues)} cues ({len(todo)} fallback)")
     return {"translations": out}
+
+
+SUMMARY_SYSTEM = """You summarize a recorded university lecture for a student, from its timestamped transcript.
+Reply with ONLY a JSON object, no prose and no code fences:
+{"summary": str, "key_points": [str], "chapters": [{"start": number, "title": str}]}
+
+- "summary": 3-5 plain sentences on what the lecture covers and the main takeaway.
+- "key_points": 4-7 short bullet points a student should remember, each under 25 words.
+- "chapters": 5-12 entries in time order that split the lecture by topic. "start" is the chapter's start time in SECONDS, taken from the transcript's [M:SS] or [H:MM:SS] stamps (convert them: [12:30] is 750). The first chapter starts at the beginning of the transcript. "title" is a short topic name, at most 6 words.
+- Use only what the transcript says. Never invent timestamps or topics.
+- Never use em dashes. Use commas, periods, or colons instead."""
+
+
+def _model_summary(system, title, transcript):
+    user = f"Lecture title: {title or '(unknown)'}\n\nTranscript:\n{transcript}"
+    return complete(system, user, max_tokens=4096, json_output=True)
+
+
+SUMMARIES = {}  # (lecture_id, language) -> result. In memory: lost on restart.
+MAX_CHAPTERS = 15
+
+
+def clean_summary(raw, duration):
+    """Coerce the model's JSON into {summary, key_points, chapters}, dropping anything malformed."""
+    if not isinstance(raw, dict):
+        raise ValueError("summary was not a JSON object")
+    summary = str(raw.get("summary") or "").strip()
+    if not summary:
+        raise ValueError("summary was empty")
+    points = [str(p).strip() for p in (raw.get("key_points") or []) if str(p).strip()][:8]
+    chapters = []
+    for c in raw.get("chapters") or []:
+        if not isinstance(c, dict):
+            continue
+        start, title = c.get("start"), str(c.get("title") or "").strip()
+        if isinstance(start, bool) or not isinstance(start, (int, float)) or not title:
+            continue
+        if start < 0 or start > duration + 5:  # a timestamp past the end of the lecture is made up
+            continue
+        chapters.append({"start": round(float(start), 1), "title": title})
+    chapters.sort(key=lambda c: c["start"])
+    deduped = []
+    for c in chapters:
+        if not deduped or c["start"] - deduped[-1]["start"] >= 1:
+            deduped.append(c)
+    return {"summary": summary, "key_points": points, "chapters": deduped[:MAX_CHAPTERS]}
+
+
+def summarize(body, model_summary=_model_summary):
+    lecture_id = str(body.get("lecture_id") or "")
+    if not lecture_id:
+        raise BadRequest("lecture_id is required")
+    lec = LECTURES.get(lecture_id)
+    captions = lec["captions"] if lec else body.get("captions") or []  # server restarted: use what the extension sent
+    title = lec["title"] if lec else str(body.get("title") or "")
+    if not isinstance(captions, list) or not captions or not all(isinstance(c, dict) and "start" in c and "text" in c for c in captions):
+        raise BadRequest("no captions for this lecture")
+    language = str(body.get("language") or "").strip()
+    key = (lecture_id, language)
+    if key in SUMMARIES:
+        return SUMMARIES[key]
+
+    system = SUMMARY_SYSTEM
+    if language:
+        system += f"\n\nWrite the summary, key_points and chapter titles in {language}. Keep the JSON keys in English."
+    duration = max(float(c.get("end") or c["start"]) for c in captions)
+    result = clean_summary(parse_json_loose(model_summary(system, title, transcript_text(captions))), duration)
+    SUMMARIES[key] = result
+    print(f"summarized {lecture_id} ({language or 'English'}): {len(result['chapters'])} chapters")
+    return result
 
 
 EXPLAIN_SYSTEM = """You are Professor Nova, a patient tutor teaching a concept on a whiteboard to a student who is meeting it for the first time.
@@ -513,6 +584,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"reply": ask(body)})
             if self.path == "/translate":
                 return self._send(200, translate(body))
+            if self.path == "/summary":
+                return self._send(200, summarize(body))
             if self.path == "/explain":
                 return self._send(200, explain(body))
             self._send(404, {"error": "not found"})

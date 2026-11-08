@@ -796,8 +796,19 @@
     return SEND_FRAME ? grabFrame(FRAME_MAX_WIDTH, FRAME_QUALITY) : null;
   }
 
+  /**
+   * The video to take a picture of. On Panopto the lecture (#primaryVideo) is often the classroom camera,
+   * while #secondaryVideo is the screen/slides recording, which is what questions are about. Use the
+   * slides stream when it has a picture, otherwise the lecture video.
+   */
+  function frameVideo() {
+    const ready = (v) => v && v.isConnected && v.videoWidth && v.videoHeight && v.readyState >= 2;
+    const slides = document.querySelector("video#secondaryVideo");
+    return ready(slides) ? slides : state.video;
+  }
+
   function grabFrame(maxWidth, quality) {
-    const v = state.video;
+    const v = frameVideo();
     if (!v || !v.videoWidth || !v.videoHeight || v.readyState < 2) return null;
     try {
       const scale = Math.min(1, maxWidth / v.videoWidth);

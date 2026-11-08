@@ -658,6 +658,10 @@ Reply with JSON only, no prose and no code fence:
 Rules:
 - Use code from the question first, then the answer, then the image.
 - Copy the code EXACTLY as written, keeping indentation and line breaks. Transcribe code visible in the image carefully.
+- Only return code that is actually written out in the question, the answer or the image. NEVER write or rebuild
+  code from a description (e.g. the answer saying "this calls .json() on the response" is not code).
+- Use the image only if the code in it is clearly readable. If it is too small, blurry or far away (for example a
+  projector screen in a classroom photo), do not guess: reply {"found": false}.
 - Return only the part the question is about, at most 25 lines. Drop unrelated cells or output.
 - Shell commands, error messages or a single word are not code to walk through: then "found": false.
 - If there is no real code, reply {"found": false}."""

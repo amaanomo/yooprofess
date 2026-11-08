@@ -6,6 +6,7 @@ Gemini when GEMINI_API_KEY (or GOOGLE_API_KEY) is set, otherwise Claude when ANT
 /ask and /translate use that provider. /explain (whiteboard lessons) has its own settings below.
 
     export GEMINI_API_KEY=...            # or ANTHROPIC_API_KEY=sk-ant-...
+    export ELEVENLABS_API_KEY=...        # optional: only for the ElevenLabs voice engine
     python3 backend/server.py
 
 Models: GEMINI_MODEL (default gemini-3.5-flash-lite), NOVA_MODEL for Claude (default claude-sonnet-5-5).
@@ -15,14 +16,25 @@ Endpoints (see the "Backend contract" in extension/content.js):
   POST /ask        answer the question, then say which part of the lecture to watch
   POST /translate  translate a batch of caption cues for the subtitle overlay
   POST /summary    summary, key points and timestamped chapters for a lecture
+  POST /explain    whiteboard lesson plan
   POST /topics     hot topics: the lecture's most-asked themes (see topics.py; set NOVA_DB_PATH on Railway)
+  GET  /voices     ElevenLabs voices (optional voice engine)
+  POST /tts        {text, voice_id} -> audio/mpeg (ElevenLabs)
+  POST /transcribe raw audio body -> {text} (ElevenLabs Scribe)
+
+/ask also takes "history" (recent chat turns, for follow-ups) and "voice" (the question
+was spoken: answer briefly for text-to-speech). The extension's default voice engine is
+free and runs in Chrome; ElevenLabs is optional.
 """
 import base64
 import json
 import os
 import re
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import topics as hot_topics
@@ -72,8 +84,10 @@ def chat_client():
     return _chat_client
 
 
-def complete(system, user, max_tokens, json_output=False, image_b64=None):
-    """One model call, same shape for both providers. Returns the reply text ("" if none)."""
+def complete(system, user, max_tokens, json_output=False, image_b64=None, history=None):
+    """One model call, same shape for both providers. Returns the reply text ("" if none).
+    history: earlier turns as [("user"|"assistant", text), ...], oldest first."""
+    history = history or []
     if PROVIDER == "gemini":
         from google.genai import types
 
@@ -85,6 +99,15 @@ def complete(system, user, max_tokens, json_output=False, image_b64=None):
         contents = user
         if image_b64:
             contents = [types.Part.from_bytes(data=base64.b64decode(image_b64), mime_type="image/jpeg"), user]
+        if history:
+            last = contents if isinstance(contents, list) else [contents]
+            contents = [
+                types.Content(role="model" if r == "assistant" else "user", parts=[types.Part.from_text(text=t)]) for r, t in history
+            ] + [
+                types.Content(
+                    role="user", parts=[p if isinstance(p, types.Part) else types.Part.from_text(text=p) for p in last]
+                )
+            ]
         resp = chat_client().models.generate_content(model=CHAT_GEMINI_MODEL, contents=contents, config=config)
         return (resp.text or "").strip()
     content = user
@@ -97,7 +120,7 @@ def complete(system, user, max_tokens, json_output=False, image_b64=None):
         model=ANTHROPIC_MODEL,
         max_tokens=max_tokens,
         system=[{"type": "text", "text": system}],
-        messages=[{"role": "user", "content": content}],
+        messages=[{"role": r, "content": t} for r, t in history] + [{"role": "user", "content": content}],
     )
     return "".join(b.text for b in msg.content if b.type == "text").strip()
 
@@ -125,8 +148,41 @@ Structure every answer as:
 **More broadly:** [deeper knowledge, context, or examples beyond the lecture]
 
 End with a line starting "Watch:" as a time range in M:SS (or H:MM:SS) from the transcript, plus a short description, e.g. "Watch: 12:33-14:08, where the professor explains CoT."
+If the student asks WHERE or WHEN something was covered (e.g. "where did he talk about recursion?"), search the whole transcript and instead give a one-sentence answer followed by up to 3 "Watch:" lines, one per line, most relevant first, each with a short description (e.g. "full explanation", "brief mention", "worked example").
 If the transcript does not cover the question, skip "In this lecture:" and answer from your full knowledge, omitting the Watch line.
-Never invent timestamps that are not in the transcript."""
+Never invent timestamps that are not in the transcript.
+Use the earlier conversation to resolve follow-ups like "explain that again" or "give another example".
+
+Video control: if the student asks you to control the video (pause, play/resume, skip or jump, change speed or volume), including jumping to where a topic is covered (e.g. "go to where he talks about recursion", "take me back to the example"), don't answer as a tutor. Reply ONLY with:
+Command: <action>   (one line per step, in order)
+Say: <one short confirming sentence, e.g. "Jumping to 7:48, where he defines recursion.">
+where <action> is one of: pause | play | seek_to M:SS | seek_by <seconds, negative = back> | speed <rate, e.g. 1.5> | volume <0-100> | mute | unmute
+For a topic jump, seek_to the start of the best match from the transcript timestamps, then add up to 2 "Watch:" lines for other places it's covered. Only add "Command: play" if the student asked to play, resume or watch. Never invent timestamps, and never use Command lines for ordinary questions."""
+
+VOICE_ADDENDUM = """
+
+The student asked out loud and your answer will be read aloud by a text-to-speech voice. Keep it to 2-4 short, conversational sentences and skip the bold section labels. No lists, and don't spell out symbols or code; say formulas in words. (Any "Watch:" or "Command:" lines are handled by the app, not read aloud, so still include them when relevant.)"""
+
+HISTORY_TURNS = 10  # earlier chat turns used for follow-ups
+
+
+def history_turns(history):
+    """Earlier turns as alternating ("user"|"assistant", text), starting with user, ending with assistant."""
+    turns = []
+    for turn in (history or [])[-HISTORY_TURNS:]:
+        text = str((turn or {}).get("text") or "").strip()
+        if not text:
+            continue
+        role = "user" if turn.get("role") == "student" else "assistant"
+        if turns and turns[-1][0] == role:
+            turns[-1] = (role, turns[-1][1] + "\n\n" + text)
+        else:
+            turns.append((role, text))
+    while turns and turns[0][0] != "user":
+        turns.pop(0)
+    if turns and turns[-1][0] == "user":  # the new question is the next user turn
+        turns.pop()
+    return turns
 
 TRANSLATE_SYSTEM = """You translate captions from a recorded university lecture into {language} for a student watching it.
 
@@ -185,6 +241,8 @@ def ask(body):
         title = "(unknown)"
     now = fmt(body.get("current_time") or 0)
     system = SYSTEM
+    if body.get("voice"):
+        system += VOICE_ADDENDUM
     language = str(body.get("language") or "").strip()
     if language:
         # The extension parses the Watch line, so it must keep its exact English format.
@@ -205,7 +263,7 @@ def ask(body):
         f"The student is paused at {now}.\nQuestion: {body.get('question', '')}"
     )
     record_question(body, title if lec else body.get("title", ""))
-    return complete(system, user, max_tokens=2048, image_b64=image)
+    return complete(system, user, max_tokens=2048, image_b64=image, history=history_turns(body.get("history")))
 
 
 def _parse_translations(text):
@@ -566,29 +624,129 @@ def explain(body):
     return {"title": "Explanation", "steps": [{"head": "Explanation", "say": fallback, "clear": False, "draw": []}]}
 
 
+# ------------------------------------------- ElevenLabs (optional voice engine) ---
+
+ELEVEN_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
+ELEVEN_BASE = "https://api.elevenlabs.io"
+ELEVEN_TTS_MODEL = os.environ.get("ELEVENLABS_TTS_MODEL", "eleven_flash_v2_5")
+ELEVEN_STT_MODEL = os.environ.get("ELEVENLABS_STT_MODEL", "scribe_v1")
+ELEVEN_DEFAULT_VOICE = os.environ.get("ELEVENLABS_DEFAULT_VOICE", "21m00Tcm4TlvDq8ikWAM")  # "Rachel"
+MAX_BODY = 25 * 1024 * 1024
+_voices_cache = {"at": 0, "data": None}
+
+
+class VoiceError(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+def eleven(method, path, data=None, headers=None, timeout=45):
+    """Call ElevenLabs. Returns (body bytes, content type)."""
+    if not ELEVEN_KEY:
+        raise VoiceError(503, "ELEVENLABS_API_KEY is not set on the server (the free Chrome voice engine doesn't need it)")
+    req = urllib.request.Request(ELEVEN_BASE + path, data=data, method=method, headers={"xi-api-key": ELEVEN_KEY, **(headers or {})})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read(), resp.headers.get("Content-Type", "")
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors="replace")[:200]
+        raise VoiceError(502, f"ElevenLabs HTTP {e.code}: {detail}")
+
+
+def list_voices():
+    if _voices_cache["data"] and time.time() - _voices_cache["at"] < 600:
+        return _voices_cache["data"]
+    raw, _ = eleven("GET", "/v1/voices", timeout=15)
+    voices = []
+    for v in json.loads(raw).get("voices", []):
+        labels = v.get("labels") or {}
+        voices.append({
+            "voice_id": v.get("voice_id"),
+            "name": v.get("name"),
+            "labels": {k: labels[k] for k in ("accent", "gender", "age", "description") if labels.get(k)},
+            "preview_url": v.get("preview_url"),
+        })
+    voices.sort(key=lambda v: (v["name"] or "").lower())
+    data = {"voices": voices, "default": ELEVEN_DEFAULT_VOICE}
+    _voices_cache.update(at=time.time(), data=data)
+    return data
+
+
+def tts(text, voice_id):
+    text = str(text or "").replace("*", "").strip()[:2500]
+    if not text:
+        raise VoiceError(400, "text is empty")
+    path = f"/v1/text-to-speech/{urllib.parse.quote(voice_id or ELEVEN_DEFAULT_VOICE)}?output_format=mp3_44100_128"
+    body = json.dumps({"text": text, "model_id": ELEVEN_TTS_MODEL}).encode()
+    audio, _ = eleven("POST", path, body, {"Content-Type": "application/json", "Accept": "audio/mpeg"})
+    return audio
+
+
+def transcribe(audio, content_type):
+    if not audio:
+        raise VoiceError(400, "no audio")
+    ext = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/mp4": "m4a"}.get(content_type, "webm")
+    boundary = uuid.uuid4().hex
+    parts = []
+    for name, value in (("model_id", ELEVEN_STT_MODEL), ("tag_audio_events", "false")):
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
+    parts.append(
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="question.{ext}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n".encode() + audio + b"\r\n"
+    )
+    parts.append(f"--{boundary}--\r\n".encode())
+    raw, _ = eleven("POST", "/v1/speech-to-text", b"".join(parts), {"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    return (json.loads(raw).get("text") or "").strip()
+
+
 class Handler(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
-    def _send(self, code, obj):
-        data = json.dumps(obj).encode()
+    def _send_bytes(self, code, data, content_type):
         self.send_response(code)
         self._cors()
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def _send(self, code, obj):
+        self._send_bytes(code, json.dumps(obj).encode(), "application/json")
 
     def do_OPTIONS(self):
         self.send_response(204)
         self._cors()
         self.end_headers()
 
-    def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+    def do_GET(self):
         try:
+            if self.path == "/voices":
+                return self._send(200, list_voices())
+            if self.path in ("/", "/health"):
+                return self._send(200, {"ok": True, "provider": PROVIDER, "model": MODEL, "elevenlabs": bool(ELEVEN_KEY)})
+            self._send(404, {"error": "not found"})
+        except VoiceError as e:
+            self._send(e.status, {"error": str(e)})
+        except Exception as e:
+            print("error:", e)
+            self._send(500, {"error": str(e)})
+
+    def do_POST(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            if length > MAX_BODY:
+                raise VoiceError(413, "request too large")
+            raw = self.rfile.read(length) if length else b""
+            if self.path == "/transcribe":
+                content_type = (self.headers.get("Content-Type") or "audio/webm").split(";")[0].strip()
+                return self._send(200, {"text": transcribe(raw, content_type)})
+            body = json.loads(raw or b"{}")
+            if self.path == "/tts":
+                return self._send_bytes(200, tts(body.get("text"), body.get("voice_id")), "audio/mpeg")
             if self.path == "/lectures":
                 LECTURES[body["lecture_id"]] = {
                     "title": body.get("title", ""),
@@ -609,6 +767,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
         except (BadRequest, ValueError) as e:
             self._send(400, {"error": str(e)})
+        except VoiceError as e:
+            print("voice error:", e)
+            self._send(e.status, {"error": str(e)})
         except Exception as e:  # surface errors to the extension
             print("error:", e)
             self._send(500, {"error": str(e)})

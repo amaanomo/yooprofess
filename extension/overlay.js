@@ -2,8 +2,9 @@
  * Nova: the on-page overlay (UI only).
  *
  * Renders the "Ask Nova" card inside a Shadow DOM root so Panopto's CSS can't
- * reach it and ours can't leak out. It knows nothing about captions, video or the
- * backend; content.js drives it through the API returned by NovaOverlay.create().
+ * reach it and ours can't leak out. It knows nothing about captions, video, voice
+ * or the backend; content.js drives it through the API returned by
+ * NovaOverlay.create().
  *
  * Everything is built with DOM APIs (no innerHTML), and all text from captions,
  * the student or the backend is set with textContent.
@@ -63,6 +64,10 @@
     info: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M12 16v-5", "M12 8h.01"],
     check: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M8 12.5l2.5 2.5L16 9.5"],
     warn: ["M10.3 4.2 2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z", "M12 10v4", "M12 17h.01"],
+    mic: ["M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z", "M5 11a7 7 0 0 0 14 0", "M12 18v3"],
+    speaker: ["M4 9v6h4l5 4V5L8 9z", "M16.5 8.5a5 5 0 0 1 0 7", "M19 6a8.5 8.5 0 0 1 0 12"],
+    mute: ["M4 9v6h4l5 4V5L8 9z", "M17 9.5l5 5", "M22 9.5l-5 5"],
+    stop: ["M7 7h10v10H7z"],
   };
 
   // The overlay currently on the page; used by the keyboard guard.
@@ -163,6 +168,10 @@
    * @param {(mode: "muted"|"lowered") => void} opts.onOriginalAudio  professor's audio while voice is on
    * @param {() => void} opts.onRetryTranslation
    * @param {() => void} opts.onLayoutChange  card shown/hidden/minimized/restored
+   * @param {(seconds: number) => void} opts.onSeek
+   * @param {(on: boolean) => void} opts.onToggleVoice  header speaker button
+   * @param {() => void} opts.onMic  composer mic button (push-to-talk)
+   * @param {() => void} opts.onStopSpeaking
    * @param {() => void} opts.onOpenTopics  the Hot topics view was opened
    * @param {() => void} opts.onRefreshTopics  "Refresh" pressed in the Hot topics view
    */
@@ -170,9 +179,12 @@
     const o = Object.assign(
       {
         windowSeconds: 90,
-        welcome: "Hey! I'm Nova. I'm following along with this lecture. Ask me anything about what was just said.",
+        welcome: "Hey! I'm Nova. I'm following along with this lecture. Ask me anything about what was just said, or say \"Hey Nova\".",
         placeholder: "Ask about what was just said...",
         footer: "Nova can make mistakes. Check important details.",
+        onToggleVoice() {},
+        onMic() {},
+        onStopSpeaking() {},
         onSend() {},
         onDownload() {},
         onReloadCaptions() {},
@@ -250,13 +262,19 @@
       icon("more")
     );
     const minBtn = h("button", { class: "icon-btn", type: "button", "aria-label": "Minimize Nova", title: "Minimize" }, icon("minimize"));
+    const voiceBtn = h(
+      "button",
+      { class: "icon-btn voice-toggle", type: "button", "aria-pressed": "true", "data-on": "true", "aria-label": "Voice replies on", title: "Voice replies on (click for text only)" },
+      icon("speaker", "icon-on"),
+      icon("mute", "icon-off")
+    );
 
     const header = h(
       "header",
       { class: "header" },
       avatar("lg"),
       h("div", { class: "heading" }, title, status),
-      h("div", { class: "header-actions" }, menuBtn, minBtn),
+      h("div", { class: "header-actions" }, voiceBtn, menuBtn, minBtn),
       menu
     );
 
@@ -461,7 +479,19 @@
       spellcheck: "true",
     });
     const sendBtn = h("button", { class: "send", type: "submit", "aria-label": "Send", title: "Send" }, icon("send"));
-    const composer = h("form", { class: "composer" }, input, sendBtn);
+    const micBtn = h("button", { class: "mic", type: "button", "aria-label": "Ask by voice", title: "Ask by voice (or say \"Hey Nova\")" }, icon("mic"));
+    const composer = h("form", { class: "composer" }, input, micBtn, sendBtn);
+
+    const voiceBarText = h("span", { class: "voice-bar-text", text: "" });
+    const voiceBarLabel = h("span", { text: "Stop" });
+    const voiceBarBtn = h("button", { class: "voice-bar-btn", type: "button" }, icon("stop"), voiceBarLabel);
+    const voiceBar = h(
+      "div",
+      { class: "voice-bar", hidden: true, role: "status" },
+      h("span", { class: "voice-wave", "aria-hidden": "true" }, h("i"), h("i"), h("i"), h("i")),
+      voiceBarText,
+      voiceBarBtn
+    );
     const footer = h("p", { class: "footer", text: o.footer });
 
     const card = h(
@@ -472,6 +502,7 @@
       topicsView,
       messages,
       chips,
+      voiceBar,
       composer,
       footer
     );
@@ -485,6 +516,44 @@
     const notices = new Map(); // key -> notice element (caption status, subtitle status, ...)
     let typingEl = null;
     let lastStatus = "";
+    let baseStatus = { state: "waiting", text: "Looking for the video…" };
+    let voiceEnabled = true;
+    let voiceState = "idle";
+
+    const VOICE_STATUS = {
+      listening: "Listening…",
+      transcribing: "Got it, thinking…",
+      speaking: "Speaking…",
+    };
+
+    /** The status line shows the voice state while there is one, else playback/page status. */
+    function renderStatus() {
+      const voiceText = VOICE_STATUS[voiceState];
+      const next = voiceText ? { state: `voice-${voiceState}`, text: voiceText } : baseStatus;
+      if (next.text === lastStatus && status.dataset.state === next.state) return;
+      lastStatus = next.text;
+      status.dataset.state = next.state;
+      statusText.textContent = next.text;
+      // Cascade flip (raise from split-flap challenger).
+      statusText.classList.remove("flip");
+      requestAnimationFrame(() => statusText.classList.add("flip"));
+    }
+
+    function renderVoiceBar() {
+      app.dataset.voice = voiceState;
+      micBtn.dataset.active = String(voiceState === "listening");
+      micBtn.setAttribute("aria-label", voiceState === "listening" ? "Stop listening" : "Ask by voice");
+      const bar = {
+        listening: ["Listening… ask your question", "Cancel"],
+        transcribing: ["Transcribing…", null],
+        speaking: ["Nova is speaking", "Stop"],
+      }[voiceState];
+      voiceBar.hidden = !bar;
+      if (!bar) return;
+      voiceBarText.textContent = bar[0];
+      voiceBarBtn.hidden = !bar[1];
+      if (bar[1]) voiceBarLabel.textContent = bar[1];
+    }
 
     function scrollToBottom() {
       requestAnimationFrame(() => {
@@ -566,6 +635,13 @@
       if (!pop.hidden) setPopOpen(false);
     });
 
+    voiceBtn.addEventListener("click", () => o.onToggleVoice(!voiceEnabled));
+    micBtn.addEventListener("click", () => o.onMic());
+    voiceBarBtn.addEventListener("click", () => {
+      if (voiceState === "listening") o.onMic(); // toggles listening off
+      else o.onStopSpeaking();
+    });
+
     minBtn.addEventListener("click", () => api.minimize());
     launcher.addEventListener("click", () => api.restore());
 
@@ -604,22 +680,24 @@
       bubbleText.append(parseMd(msg.text));
       const bubble = h("div", { class: "bubble" }, bubbleText);
       if (msg.stub) bubble.append(h("span", { class: "tag", text: "Demo reply (stub mode)" }));
-      if (msg.watch) {
-        const { start, end, label } = msg.watch;
-        const fmt = root.NovaSRT ? root.NovaSRT.formatTime : (t) => String(Math.floor(t));
+      // msg.watch: one { start, end, label } (older saved chats) or a ranked array.
+      const watches = Array.isArray(msg.watch) ? msg.watch : msg.watch ? [msg.watch] : [];
+      const fmt = root.NovaSRT ? root.NovaSRT.formatTime : (t) => String(Math.floor(t));
+      watches.forEach(({ start, end, label }, i) => {
         const timeStr = end && end !== start ? `${fmt(start)} – ${fmt(end)}` : fmt(start);
-        const watchPlaySvg = icon("play", "watch-play-icon");
-        const watchBtn = h(
-          "button",
-          { class: "watch-btn", type: "button", onclick: () => o.onSeek(start) },
-          watchPlaySvg,
-          h("span", { class: "watch-btn-time", text: timeStr }),
-          label ? h("span", { class: "watch-btn-label", text: label }) : null
+        const top = watches.length > 1 && i === 0;
+        bubble.append(
+          h(
+            "button",
+            { class: `watch-btn${top ? " watch-btn--top" : ""}`, type: "button", onclick: () => o.onSeek(start) },
+            icon("play", "watch-play-icon"),
+            h("span", { class: "watch-btn-time", text: timeStr }),
+            label ? h("span", { class: "watch-btn-label", text: label }) : null,
+            top ? h("span", { class: "watch-btn-badge", text: "Most relevant" }) : null
+          )
         );
-        bubble.append(watchBtn);
-      }
+      });
       if (Array.isArray(msg.chapters) && msg.chapters.length) {
-        const fmt = root.NovaSRT ? root.NovaSRT.formatTime : (t) => String(Math.floor(t));
         bubble.append(
           h(
             "div",
@@ -635,7 +713,7 @@
             )
           )
         );
-      } else if (role === "nova" && !msg.error && msg.at) {
+      } else if (role === "nova" && !msg.error && !msg.local && msg.at) {
         // Opens the whiteboard lesson tab (onExplain is wired up in content.js).
         bubble.append(
           h("button", { class: "deep-dive-btn", type: "button", onclick: () => o.onExplain(msg) }, "Deep Dive")
@@ -860,13 +938,30 @@
         const fmt = root.NovaSRT ? root.NovaSRT.formatTime : (t) => String(Math.floor(t));
         const text =
           state === "waiting" ? "Looking for the video…" : `${state === "paused" ? "Paused" : "Following"} at ${fmt(time)}`;
-        if (text === lastStatus && status.dataset.state === state) return;
-        lastStatus = text;
-        status.dataset.state = state;
-        statusText.textContent = text;
-        // Cascade flip (raise from split-flap challenger).
-        statusText.classList.remove("flip");
-        requestAnimationFrame(() => statusText.classList.add("flip"));
+        baseStatus = { state, text };
+        renderStatus();
+      },
+
+      /** Header speaker toggle: true = Nova speaks replies, false = text only. */
+      setVoiceEnabled(on) {
+        voiceEnabled = Boolean(on);
+        voiceBtn.setAttribute("aria-pressed", String(voiceEnabled));
+        voiceBtn.dataset.on = String(voiceEnabled);
+        voiceBtn.setAttribute("aria-label", voiceEnabled ? "Voice replies on" : "Voice replies off");
+        voiceBtn.title = voiceEnabled ? "Voice replies on (click for text only)" : "Text only (click to turn voice on)";
+      },
+
+      /** Live words while the student is talking (free speech engine). */
+      setVoiceTranscript(text) {
+        if (voiceState !== "listening" || !String(text || "").trim()) return;
+        voiceBarText.textContent = `“${String(text).trim()}”`;
+      },
+
+      /** "idle" | "listening" | "transcribing" | "speaking" */
+      setVoiceState(value) {
+        voiceState = VOICE_STATUS[value] ? value : "idle";
+        renderStatus();
+        renderVoiceBar();
       },
 
       setContextLabel(text) {

@@ -1,5 +1,5 @@
 /*
- * Nova: content script.
+ * Nova: lecture content script.
  *
  * Runs in every Panopto Viewer.aspx / Embed.aspx frame (including Canvas iframes),
  * but only does anything in a frame whose URL has a lecture "id". It:
@@ -7,8 +7,11 @@
  *   2. fetches the captions with the student's Panopto session, parses them (srt.js),
  *      caches them, and sends them to the backend through background.js
  *   3. follows the <video> element's playback time
- *   4. sends questions plus the last 90 seconds of captions to the backend
+ *   4. sends questions (typed or spoken), the last 90 seconds of captions, the
+ *      recent conversation and a frame of the video (so Nova can read slides)
  *   5. translated subtitles (translator.js + subtitles.js) and spoken translation (voice.js)
+ *   6. voice: "Hey Nova" (spotter.js + voice-client.js); video commands
+ *      ("pause", "go back 30 seconds") run locally, everything else is asked
  *
  * Runs at document_start only so the keyboard guard is registered before
  * Panopto's own key handlers; everything else waits for the DOM.
@@ -78,6 +81,9 @@
    */
   const PANOPTO_LANGUAGE_IDS = {};
 
+  /** How many earlier chat turns go with each question (conversation memory). */
+  const HISTORY_TURNS = 10;
+
   // ===========================================================================
   // Backend contract. This is a PROPOSAL for Person 2 to confirm.
   // Every request/response shape lives here so it's easy to change.
@@ -94,13 +100,15 @@
   }
 
   /** POST <BACKEND_URL>/ask */
-  function buildAskPayload({ lectureId, currentTime, question, context, language, frame, source, title }) {
+  function buildAskPayload({ lectureId, currentTime, question, context, history, voice, language, frame, source, title }) {
     const payload = {
       lecture_id: lectureId,
       current_time: Math.round(currentTime * 10) / 10,
       question,
       context: context.map((c) => ({ start: c.start, end: c.end, text: c.text })),
-      // "typed" or "chip". Hot topics only counts typed questions (chips aren't topics).
+      history: buildHistory(history),
+      voice: Boolean(voice),
+      // "typed" or "chip". Hot topics counts every real question (typed or spoken), never chip taps.
       source: source === "chip" ? "chip" : "typed",
       title,
     };
@@ -109,6 +117,14 @@
     // A JPEG of the video as the student sees it (base64, no data: prefix), so Nova can read slides.
     if (frame) payload.image = frame;
     return payload;
+  }
+
+  /** Last few turns as [{ role: "student" | "nova", text }]. Error replies are left out. */
+  function buildHistory(history) {
+    return (history || [])
+      .filter((m) => m && !m.error && !m.local && typeof m.text === "string" && m.text.trim())
+      .slice(-HISTORY_TURNS)
+      .map((m) => ({ role: m.role === "student" ? "student" : "nova", text: m.text }));
   }
 
   /** POST <BACKEND_URL>/topics. refresh: rebuild if new questions came in since the last build. */
@@ -171,8 +187,18 @@
   // Startup
   // ===========================================================================
 
-  if (window.__novaContentLoaded) return;
-  window.__novaContentLoaded = true;
+  // After the extension is reloaded, the old copy of this script is still on the
+  // page but disconnected. Only skip loading if a *live* copy is already here.
+  const alive = window.__novaContentLoaded;
+  if (typeof alive === "function" && alive()) return;
+  window.__novaContentLoaded = () => {
+    try {
+      return Boolean(chrome.runtime && chrome.runtime.id);
+    } catch (_) {
+      return false;
+    }
+  };
+  if (alive) document.querySelectorAll("nova-overlay").forEach((el) => el.remove()); // the dead copy's card
 
   const log = (...args) => console.log("[Nova]", ...args);
   const warn = (...args) => console.warn("[Nova]", ...args);
@@ -202,6 +228,7 @@
     loadToken: 0,
   };
   let overlay = null;
+  let voice = null;
 
   // Translated subtitles: language/mode/voice are the student's saved choices; the rest is runtime state.
   const subs = {
@@ -227,7 +254,7 @@
       cssUrl: chrome.runtime.getURL("overlay.css"),
       mascotUrl: chrome.runtime.getURL("icons/nova.png"),
       windowSeconds: CAPTION_WINDOW_SECONDS,
-      onSend: (text, source) => (text === SUMMARY_PROMPT ? summarize() : ask(text, source)),
+      onSend: (text, source) => (text === SUMMARY_PROMPT ? summarize() : handleInput(text, { voice: false, source })),
       onSummarize: () => summarize(),
       onExportNotes: exportNotes,
       onDownload: downloadJson,
@@ -246,6 +273,18 @@
       onLayoutChange: () => subs.ui && subs.ui.relayout(),
       onOpenTopics: () => loadTopics(),
       onRefreshTopics: () => loadTopics({ refresh: true }),
+      onToggleVoice: (on) => voice.setVoiceReplies(on),
+      onMic: () => voice.listen(),
+      onStopSpeaking: () => voice.stopSpeaking(),
+    });
+
+    voice = NovaVoiceClient.attach({
+      getOverlay: () => overlay,
+      onWake,
+      onTranscript: onVoiceQuestion,
+      onNoTranscript: ({ reason, error }) => {
+        if (reason === "error") overlay.setNotice({ kind: "warn", text: "I couldn't hear that clearly.", detail: error });
+      },
     });
 
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -255,8 +294,11 @@
         sendResponse({ ok: true, visible, lectureId: state.lectureId });
       }
     });
+    // Tell background this frame is the lecture, so "Hey Nova" and the toolbar land here.
+    sendToBackground({ type: "NOVA_REGISTER_LECTURE_FRAME" });
 
     await overlay.mount();
+    voice.sync();
     overlay.setChips(DEFAULT_CHIPS);
     await initSubtitles();
     watchVideo();
@@ -593,25 +635,92 @@
   // Part 4: chat
   // ===========================================================================
 
+  /**
+   * Jump the lecture AND the slides recording (#primaryVideo + #secondaryVideo)
+   * to the same moment. A secondary stream that's deliberately offset from the
+   * primary keeps its offset; small drift (< 2s) is snapped back into sync.
+   */
   function seekTo(seconds) {
     const v = state.video;
-    if (v && v.isConnected && Number.isFinite(seconds)) {
-      v.currentTime = seconds;
+    if (!v || !v.isConnected || !Number.isFinite(seconds)) return;
+    const target = Math.max(0, Number.isFinite(v.duration) ? Math.min(seconds, v.duration) : seconds);
+    // A refresh still running means the student is really "paused" (it's just the blip).
+    const paused = Boolean(refreshMute) || !isPlaying();
+    if (refreshMute) cancelRefresh(); // the newer jump wins
+    // While paused, Panopto doesn't redraw: start a hair early so the refresh blip ends on target.
+    setVideoTime(paused ? Math.max(0, target - REFRESH_BLIP_MS / 1000) : target);
+    if (paused) refreshWhilePaused(target);
+    return target;
+  }
+
+  /** Set both recordings' position (no redraw while paused; see refreshWhilePaused). */
+  function setVideoTime(target) {
+    const v = state.video;
+    for (const x of allVideos()) {
+      if (x === v) continue;
+      const offset = x.currentTime - v.currentTime;
+      const t = target + (Math.abs(offset) < 2 ? 0 : offset);
+      x.currentTime = Math.max(0, Number.isFinite(x.duration) ? Math.min(t, x.duration) : t);
+    }
+    v.currentTime = target;
+  }
+
+  /**
+   * Panopto only redraws the picture, the slides and its seek bar while playing,
+   * so a jump made while paused looked like nothing happened. Fix: silently press
+   * play for a moment, then pause again. The video ends paused at the new spot.
+   */
+  const REFRESH_BLIP_MS = 250;
+  let refreshRequest = 0;
+  let refreshMute = null; // { video, wasMuted } while a refresh has the lecture muted
+
+  /** Stop a refresh in progress (a newer command wins) and give the sound back. */
+  function cancelRefresh() {
+    refreshRequest++;
+    if (refreshMute) {
+      refreshMute.video.muted = refreshMute.wasMuted;
+      refreshMute = null;
     }
   }
 
-  // Extract "Watch: M:SS-M:SS, description" from an Nova reply.
-  // Returns { clean: text without watch line, watch: { start, end, label } | null }.
-  function parseWatch(text) {
-    const match = text.match(/\nWatch:\s*([^\n]+)/i) || text.match(/^Watch:\s*([^\n]+)/im);
-    if (!match) return { clean: text, watch: null };
-    const clean = text.replace(match[0], "").trim();
-    const timeMatch = match[1].trim().match(/^([\d:]+)\s*[-–]\s*([\d:]+)(?:[,.]?\s*(.+))?/);
-    if (!timeMatch) return { clean: text, watch: null };
-    const start = parseTimestamp(timeMatch[1]);
-    const end = parseTimestamp(timeMatch[2]);
-    if (!Number.isFinite(start)) return { clean: text, watch: null };
-    return { clean, watch: { start, end: Number.isFinite(end) ? end : start, label: timeMatch[3] ? timeMatch[3].trim() : "" } };
+  function refreshWhilePaused(target) {
+    const v = state.video;
+    if (refreshMute) cancelRefresh(); // back-to-back jumps
+    const request = ++refreshRequest;
+    const wasMuted = v.muted;
+    refreshMute = { video: v, wasMuted };
+    v.muted = true; // no audio blip
+    const finish = () => {
+      if (request !== refreshRequest) return; // a newer jump took over
+      setPlaying(false);
+      setTimeout(() => {
+        if (request !== refreshRequest) return;
+        v.muted = wasMuted;
+        refreshMute = null;
+        if (Math.abs(v.currentTime - target) > 1.5) setVideoTime(target); // keep it exact
+      }, 150);
+    };
+    let started = false;
+    const onPlaying = () => {
+      if (started) return;
+      started = true;
+      v.removeEventListener("playing", onPlaying);
+      setTimeout(finish, REFRESH_BLIP_MS);
+    };
+    if (!v.paused) {
+      onPlaying(); // already playing (a previous blip): just play a moment, then pause
+    } else {
+      v.addEventListener("playing", onPlaying);
+      setPlaying(true);
+    }
+    // If the video never starts (still buffering), stop waiting after 2.5s.
+    setTimeout(() => {
+      v.removeEventListener("playing", onPlaying);
+      if (!started) {
+        started = true;
+        finish();
+      }
+    }, 2500);
   }
 
   /**
@@ -638,7 +747,202 @@
     }
   }
 
-  async function ask(question, source = "input") {
+  // ---- Panopto's own controls ------------------------------------------------
+  // Panopto keeps the lecture and slides recordings in sync when its own buttons
+  // are used. Pausing the <video> elements directly makes Panopto's player fight
+  // back (it still thinks it's playing), so play/pause/mute go through its buttons.
+
+  const PANOPTO_PLAY_BUTTON = "#playButton"; // title "Pause" while playing, "Play" while paused
+  const PANOPTO_MUTE_BUTTON = "#muteButton"; // title "Mute" / "Unmute"
+
+  function panoptoButton(selector) {
+    const b = document.querySelector(selector);
+    return b && b.isConnected ? b : null;
+  }
+
+  function buttonLabel(b) {
+    return b ? String(b.title || b.getAttribute("aria-label") || "").trim() : "";
+  }
+
+  function isPlaying() {
+    const label = buttonLabel(panoptoButton(PANOPTO_PLAY_BUTTON));
+    if (/^pause/i.test(label)) return true;
+    if (/^play/i.test(label)) return false;
+    return Boolean(state.video && !state.video.paused);
+  }
+
+  function press(b) {
+    b.click();
+  }
+
+  let playRequest = 0; // newest play/pause request; older checks stand down
+
+  /** Play or pause BOTH recordings. Uses Panopto's button; falls back to the videos. */
+  function setPlaying(want) {
+    const request = ++playRequest;
+    if (isPlaying() === want) return;
+    const b = panoptoButton(PANOPTO_PLAY_BUTTON);
+    const direct = () => allVideos().forEach((x) => (want ? x.play().catch(() => {}) : x.pause()));
+    if (!b) return direct();
+    press(b);
+    setTimeout(() => {
+      if (request === playRequest && isPlaying() !== want) {
+        warn("Panopto's play button didn't respond; controlling both videos directly");
+        direct();
+      }
+    }, 600);
+  }
+
+  function isMuted() {
+    const label = buttonLabel(panoptoButton(PANOPTO_MUTE_BUTTON));
+    if (/^unmute/i.test(label)) return true;
+    if (/^mute/i.test(label)) return false;
+    return Boolean(state.video && state.video.muted);
+  }
+
+  /** Mute/unmute through Panopto's button (the lecture has the sound; slides are always muted). */
+  function setMuted(want) {
+    if (isMuted() === want) return;
+    const b = panoptoButton(PANOPTO_MUTE_BUTTON);
+    if (b) press(b);
+    else if (state.video) state.video.muted = want;
+  }
+
+  /**
+   * Pull every "Watch: M:SS-M:SS, description" line out of a Nova reply (the
+   * backend sends up to 3, most relevant first, for "where did they cover X?").
+   * Returns { clean: text without the watch lines, watch: [{ start, end, label }] | null }.
+   */
+  function parseWatch(text) {
+    const watch = [];
+    const clean = text
+      .replace(/^[ \t]*Watch:[ \t]*([^\n]+)\n?/gim, (line, body) => {
+        const m = body.trim().match(/^(\d{1,2}(?::\d{2}){1,2})(?:\s*[-–]\s*(\d{1,2}(?::\d{2}){1,2}))?(?:[,.:;]?\s*(.+))?/);
+        const start = m ? parseTimestamp(m[1]) : NaN;
+        if (!Number.isFinite(start)) return line; // not a timestamp: leave the text alone
+        const end = m[2] ? parseTimestamp(m[2]) : start;
+        watch.push({ start, end: Number.isFinite(end) ? end : start, label: m[3] ? m[3].trim() : "" });
+        return "";
+      })
+      .trim();
+    return watch.length ? { clean, watch } : { clean: text, watch: null };
+  }
+
+  // ===========================================================================
+  // Voice
+  // ===========================================================================
+
+  async function onWake() {
+    overlay.show();
+    if (voice.settings.pauseVideoOnWake && state.video && isPlaying()) {
+      setPlaying(false); // both recordings; so the lecture audio doesn't drown out the question
+    }
+  }
+
+  async function onVoiceQuestion(text, alternatives = []) {
+    overlay.show();
+    await handleInput(text, { voice: true, alternatives });
+  }
+
+  /**
+   * Typed or spoken input. Video commands we understand locally run instantly
+   * ("can you pause the video", "go back 30 seconds and play", "1.5x"); anything
+   * else goes to the AI, which may answer or send back commands (e.g. "go to
+   * where he talks about recursion").
+   */
+  async function handleInput(text, { voice: spoken, alternatives = [], source }) {
+    // Speech recognition gives several guesses ("pause the video" / "paws the video"):
+    // run the first one that is a valid video command.
+    for (const guess of [text, ...alternatives]) {
+      const actions = NovaCommands.parse(guess);
+      if (actions) {
+        if (guess !== text) log(`Using alternative "${guess}" (top guess was "${text}")`);
+        return runCommand(guess, actions, { spoken });
+      }
+    }
+    await ask(text, { voice: spoken, source });
+  }
+
+  function allVideos() {
+    // Panopto can show two synced streams (slides + camera): control them together.
+    const list = Array.from(document.querySelectorAll("video"));
+    if (state.video && !list.includes(state.video)) list.unshift(state.video);
+    return list;
+  }
+
+  const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+
+  /** Run actions on the lecture video. Returns per-action results for describe(). */
+  function applyActions(actions) {
+    const v = state.video;
+    if (!v || !v.isConnected) return [{ ok: false, error: "I can't find the video on this page" }];
+    const videos = allVideos();
+    const results = [];
+    for (const a of actions) {
+      switch (a.type) {
+        case "pause":
+        case "play":
+          cancelRefresh(); // a "redraw after jump" in progress stands down
+          setPlaying(a.type === "play"); // lecture + slides together, via Panopto's button
+          results.push({ type: a.type, ok: true });
+          break;
+        case "seek_to":
+        case "seek_by": {
+          const target = a.type === "seek_to" ? a.seconds : Math.round(getCurrentTime()) + a.seconds;
+          const landed = seekTo(target); // both recordings
+          results.push({ type: a.type, ok: true, time: Number.isFinite(landed) ? landed : getCurrentTime() });
+          break;
+        }
+        case "speed":
+        case "speed_by": {
+          const rate = clamp(Math.round((a.type === "speed" ? a.rate : v.playbackRate + a.delta) * 100) / 100, 0.25, 3);
+          videos.forEach((x) => (x.playbackRate = rate)); // both recordings at the same speed
+          results.push({ type: a.type, ok: true, rate });
+          break;
+        }
+        case "volume":
+        case "volume_by": {
+          // Only the lecture (#primaryVideo) has sound; the slides stream stays muted.
+          let level;
+          if (a.type === "volume_by" && a.delta > 0 && isMuted()) level = v.volume || 0.5; // "turn it up" while muted = unmute
+          else level = clamp(a.type === "volume" ? a.level : (isMuted() ? 0 : v.volume) + a.delta, 0, 1);
+          if (level > 0) {
+            v.volume = level;
+            setMuted(false);
+          } else {
+            setMuted(true);
+          }
+          results.push({ type: a.type, ok: true, level });
+          break;
+        }
+        case "mute":
+        case "unmute":
+          setMuted(a.type === "mute");
+          results.push({ type: a.type, ok: true });
+          break;
+      }
+    }
+    log("Video command", actions, "->", results);
+    return results;
+  }
+
+  /** A command handled locally: run it, then confirm in the chat (and out loud if spoken). */
+  function runCommand(text, actions, { spoken }) {
+    const reply = NovaCommands.describe(applyActions(actions)) || "Done.";
+    saveMessage({ role: "student", text, at: Date.now(), local: true });
+    overlay.addMessage({ role: "student", text });
+    const msg = { role: "nova", text: reply, at: Date.now(), local: true };
+    saveMessage(msg);
+    overlay.addMessage(msg);
+    if (spoken) voice.speak(reply);
+  }
+
+  // ===========================================================================
+  // Ask
+  // ===========================================================================
+
+  async function ask(question, { voice: spoken = false, source = "input" } = {}) {
+    if (overlay.isTopicsOpen()) overlay.showChat(); // answers (typed or spoken) appear in the chat
     if (state.busy) return;
     const lectureId = state.lectureId;
     const currentTime = getCurrentTime();
@@ -646,7 +950,8 @@
     const lang = currentLanguage();
     const language = lang ? `${lang.english} (${lang.label})` : null;
     const frame = captureFrame();
-    const payload = buildAskPayload({ lectureId, currentTime, question, context, language, frame, source, title: state.title });
+    const history = state.history.slice(); // before this question is added
+    const payload = buildAskPayload({ lectureId, currentTime, question, context, history, voice: spoken, language, frame, source, title: state.title });
 
     log(
       `/ask at ${formatTime(currentTime)} with ${context.length} caption lines` +
@@ -678,12 +983,25 @@
       });
       return;
     }
-    const { clean, watch } = parseWatch(reply);
+    // The AI may answer a playback request with commands, e.g. "go to where he
+    // talks about recursion" -> "Command: seek_to 7:48" + "Say: Jumping to 7:48 ...".
+    const fromAI = NovaCommands.parseReply(reply);
+    let body = reply;
+    let commandMsg = false;
+    if (fromAI.actions.length) {
+      const done = NovaCommands.describe(applyActions(fromAI.actions));
+      body = [fromAI.say || done, fromAI.rest].filter(Boolean).join("\n");
+      commandMsg = true;
+    }
+    const { clean, watch } = parseWatch(body);
     const msg = { role: "nova", text: clean, watch, question, time: payload.current_time, at: Date.now() };
+    if (commandMsg) msg.local = true; // no "Deep Dive" on "Jumping to 7:48"
     if (res.stub) msg.stub = true;
     saveMessage(msg);
     overlay.addMessage(msg);
     if (chips) overlay.setChips(chips);
+    // Spoken questions get spoken answers (unless the header toggle is set to text only).
+    if (spoken) voice.speak(clean);
   }
 
   // ---- Export notes ------------------------------------------------------------

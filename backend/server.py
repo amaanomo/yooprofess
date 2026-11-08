@@ -1,8 +1,8 @@
 """
-Minimal Orbit backend for local testing.
+Minimal Nova backend for local testing.
 
     export ANTHROPIC_API_KEY=sk-ant-...   # for Claude (default)
-    export ORBIT_PROVIDER=gemini          # switch to Gemini
+    export NOVA_PROVIDER=gemini          # switch to Gemini
     export GOOGLE_API_KEY=...             # required when using Gemini
     python3 backend/server.py
 
@@ -16,29 +16,29 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PROVIDER = os.environ.get("ORBIT_PROVIDER", "anthropic")  # provider for /ask
+PROVIDER = os.environ.get("NOVA_PROVIDER", "anthropic")  # provider for /ask
 
 # Whiteboard lessons (/explain). Uses Gemini's free tier when a Gemini key is available, otherwise Claude Haiku.
-# Force one with ORBIT_EXPLAIN_PROVIDER=gemini|anthropic.
-EXPLAIN_MODEL = os.environ.get("ORBIT_EXPLAIN_MODEL", "claude-haiku-5-5")  # cheap Claude model for whiteboard plans
+# Force one with NOVA_EXPLAIN_PROVIDER=gemini|anthropic.
+EXPLAIN_MODEL = os.environ.get("NOVA_EXPLAIN_MODEL", "claude-haiku-5-5")  # cheap Claude model for whiteboard plans
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash")  # tried if the first fails
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY") or (os.environ.get("GOOGLE_API_KEY") if PROVIDER == "gemini" else None)
-EXPLAIN_PROVIDER = os.environ.get("ORBIT_EXPLAIN_PROVIDER") or ("gemini" if GEMINI_KEY else "anthropic")
+EXPLAIN_PROVIDER = os.environ.get("NOVA_EXPLAIN_PROVIDER") or ("gemini" if GEMINI_KEY else "anthropic")
 PORT = int(os.environ.get("PORT", "8000"))
 
 if PROVIDER == "gemini":
     import google.generativeai as genai
     genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
-    MODEL = os.environ.get("ORBIT_MODEL", "gemini-2.0-flash")
+    MODEL = os.environ.get("NOVA_MODEL", "gemini-2.0-flash")
 else:
     import anthropic
     client = anthropic.Anthropic()
-    MODEL = os.environ.get("ORBIT_MODEL", "claude-sonnet-4-6")
+    MODEL = os.environ.get("NOVA_MODEL", "claude-sonnet-4-6")
 
 LECTURES = {}  # lecture_id -> {"title": str, "captions": [...]}
 
-SYSTEM = """You are Orbit, an expert tutor following along with a recorded lecture. Answer like a professor who knows the field thoroughly.
+SYSTEM = """You are Nova, an expert tutor following along with a recorded lecture. Answer like a professor who knows the field thoroughly.
 
 Format rules:
 - Use **In this lecture:** and **More broadly:** as bold section labels
@@ -102,7 +102,7 @@ def ask(body):
         return "".join(b.text for b in msg.content if b.type == "text").strip()
 
 
-EXPLAIN_SYSTEM = """You are Professor Orbit, a patient tutor teaching a concept on a whiteboard to a student who is meeting it for the first time.
+EXPLAIN_SYSTEM = """You are Professor Nova, a patient tutor teaching a concept on a whiteboard to a student who is meeting it for the first time.
 Reply with ONLY a JSON object, no prose and no code fences:
 {"title": str, "steps": [{"head": str, "say": str, "clear": bool, "draw": [shape, ...]}]}
 "head" is a 2-4 word heading for the step (shown in the lesson outline), e.g. "Everyday analogy".
@@ -238,7 +238,7 @@ def parse_json_loose(text):
 
 
 def get_anthropic():
-    """The Anthropic client. It only exists at startup when ORBIT_PROVIDER isn't gemini, so create it on demand."""
+    """The Anthropic client. It only exists at startup when NOVA_PROVIDER isn't gemini, so create it on demand."""
     global client
     if "client" not in globals():
         import anthropic
@@ -304,7 +304,7 @@ def explain(body):
     prompt = (
         f"Lecture: {lec['title'] if lec else '(unknown)'}\n\nTranscript:\n{transcript}\n\n"
         f"The student asked: {body.get('question', '')}\n"
-        f"Orbit's short answer was: {body.get('reply', '')}\n\n"
+        f"Nova's short answer was: {body.get('reply', '')}\n\n"
     )
     if followup:
         lesson = body.get("lesson") or []
@@ -372,7 +372,7 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     explain_model = GEMINI_MODEL if EXPLAIN_PROVIDER == "gemini" else EXPLAIN_MODEL
     print(
-        f"Orbit backend on http://localhost:{PORT} | /ask: {PROVIDER}/{MODEL} | /explain: {EXPLAIN_PROVIDER}/{explain_model}",
+        f"Nova backend on http://localhost:{PORT} | /ask: {PROVIDER}/{MODEL} | /explain: {EXPLAIN_PROVIDER}/{explain_model}",
         flush=True,
     )
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

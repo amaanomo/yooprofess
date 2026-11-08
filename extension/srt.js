@@ -1,8 +1,8 @@
 /*
- * Orbit: SRT parsing and caption-window helpers.
+ * Nova: SRT parsing and caption-window helpers.
  *
  * Pure functions only (no DOM, no chrome.* APIs), so the same file is used by:
- *   - the content script (exposed as globalThis.OrbitSRT)
+ *   - the content script (exposed as globalThis.NovaSRT)
  *   - the background service worker (via importScripts)
  *   - Node, to run the test cases at the bottom:   node srt.js
  */
@@ -128,7 +128,7 @@
   }
 
   const api = { parseSRT, parseTimestamp, captionWindow, formatTime };
-  root.OrbitSRT = api;
+  root.NovaSRT = api;
 
   // ---------------------------------------------------------------------------
   // Tests: `node srt.js`. Never runs in the browser.
@@ -241,7 +241,7 @@
         console.log(`  FAIL ${t.name}\n${err.message}\n`);
       }
     }
-    console.log(`\n[Orbit] srt.js: ${tests.length - failed}/${tests.length} tests passed`);
+    console.log(`\n[Nova] srt.js: ${tests.length - failed}/${tests.length} tests passed`);
     if (failed) process.exitCode = 1;
   }
 })(typeof globalThis !== "undefined" ? globalThis : this);

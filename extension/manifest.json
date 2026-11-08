@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Orbit: Lecture Tutor",
+  "name": "Nova: Lecture Tutor",
   "version": "0.1.0",
   "description": "An AI tutor that follows along with your Panopto lecture. Ask about what was just said.",
   "permissions": ["storage", "tabs"],
@@ -9,7 +9,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Show or hide Orbit",
+    "default_title": "Show or hide Nova",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -36,7 +36,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["overlay.css", "icons/orbit.png"],
+      "resources": ["overlay.css", "icons/nova.png"],
       "matches": ["https://*.panopto.com/*"]
     }
   ]

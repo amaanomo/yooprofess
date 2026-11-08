@@ -1,6 +1,6 @@
-# Orbit Chrome extension (extension layer)
+# Nova Chrome extension (extension layer)
 
-This folder is the Chrome extension half of Orbit. It detects a Panopto lecture, pulls its captions with the student's own Panopto session, follows the video's playback time, and shows the "Ask Orbit" card on the page. The AI, the backend and the professor dashboard live elsewhere (Person 2).
+This folder is the Chrome extension half of Nova. It detects a Panopto lecture, pulls its captions with the student's own Panopto session, follows the video's playback time, and shows the "Ask Nova" card on the page. The AI, the backend and the professor dashboard live elsewhere (Person 2).
 
 Plain JavaScript, HTML and CSS. No framework, no build step. **New to this? Follow [INSTALL.md](INSTALL.md) for step-by-step install instructions.**
 
@@ -10,21 +10,21 @@ extension/
 ├── background.js    toolbar button + all backend calls (BACKEND_URL, STUB_MODE)
 ├── content.js       lecture detection, captions, video tracking, chat (CAPTION_URL, request formats)
 ├── srt.js           SRT parser + caption-window helper, with tests (node srt.js)
-├── overlay.js       the Orbit card, built inside a Shadow DOM root
+├── overlay.js       the Nova card, built inside a Shadow DOM root
 ├── overlay.css      the card's styles (only apply inside the shadow root)
-└── icons/           toolbar icons; put the mascot here as orbit.png
+└── icons/           toolbar icons; put the mascot here as nova.png
 ```
 
 ## Load it
 
 1. Open `chrome://extensions` and turn on **Developer mode** (top right).
 2. Click **Load unpacked** and pick this `extension/` folder.
-3. Open a Panopto lecture (`https://<school>.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=...`) or a Canvas page with an embedded Panopto video. The Orbit card appears in the bottom-left corner.
-4. Click the Orbit toolbar icon to hide or show the card. The **–** button on the card minimizes it to the round avatar button, and clicking the avatar brings it back.
+3. Open a Panopto lecture (`https://<school>.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=...`) or a Canvas page with an embedded Panopto video. The Nova card appears in the bottom-left corner.
+4. Click the Nova toolbar icon to hide or show the card. The **–** button on the card minimizes it to the round avatar button, and clicking the avatar brings it back.
 
-After you edit a file, click the reload icon on Orbit's card in `chrome://extensions`, then reload the Panopto tab.
+After you edit a file, click the reload icon on Nova's card in `chrome://extensions`, then reload the Panopto tab.
 
-**Mascot:** save it as `icons/orbit.png` (square, any size, ideally 256px or more). If the file is missing, the avatars show as plain green circles.
+**Mascot:** save it as `icons/nova.png` (square, any size, ideally 256px or more). If the file is missing, the avatars show as plain green circles.
 
 ## Settings
 
@@ -79,14 +79,14 @@ Nothing else is ever sent: only the lecture ID, title, captions, playback time a
 
 All of it is in `chrome.storage.local`, keyed by lecture ID:
 
-- `orbit:captions:<lecture_id>`: parsed captions, so reloading the page doesn't fetch them again. **⋯ → Reload captions** fetches them fresh.
-- `orbit:chat:<lecture_id>`: the chat history, the last 200 messages. **⋯ → Clear chat** deletes it.
+- `nova:captions:<lecture_id>`: parsed captions, so reloading the page doesn't fetch them again. **⋯ → Reload captions** fetches them fresh.
+- `nova:chat:<lecture_id>`: the chat history, the last 200 messages. **⋯ → Clear chat** deletes it.
 
-To wipe everything, open the extension's service worker console (`chrome://extensions` → Orbit → "service worker") and run `chrome.storage.local.clear()`.
+To wipe everything, open the extension's service worker console (`chrome://extensions` → Nova → "service worker") and run `chrome.storage.local.clear()`.
 
 ## How to test each state
 
-Open DevTools on the lecture page. Every Orbit log line starts with `[Orbit]`. **Inside Canvas**, Orbit runs in the Panopto iframe, so pick that frame (`...panopto.com`) in the Console's context dropdown, the one that says "top" by default.
+Open DevTools on the lecture page. Every Nova log line starts with `[Nova]`. **Inside Canvas**, Nova runs in the Panopto iframe, so pick that frame (`...panopto.com`) in the Console's context dropdown, the one that says "top" by default.
 
 > Captions are cached after the first successful load. To re-test a caption state, use **⋯ → Reload captions** instead of reloading the page.
 
@@ -96,7 +96,7 @@ Open DevTools on the lecture page. Every Orbit log line starts with `[Orbit]`. *
 | **Not signed in** | Open the lecture, then delete the Panopto cookies in DevTools → Application → Cookies, then **⋯ → Reload captions**. Quick fake: temporarily set `CAPTION_URL` to `{origin}/Panopto/Pages/Home.aspx?id={id}` (that returns an HTML page). | Warning: "You're not signed in to Panopto..." with a Retry button. The strip reads "Captions unavailable: not signed in to Panopto". Triggered by a redirect to a login page, HTTP 401/403, or HTML instead of SRT. |
 | **No captions** | Open a lecture that has no captions. | Info: "This lecture doesn't have captions yet...". The strip reads "No captions on this lecture". Download is disabled. |
 | **Panopto error** | DevTools → Network → right-click the `GenerateSRT.ashx` request → **Block request URL**, then **⋯ → Reload captions**. | Error: "Couldn't load the captions from Panopto." with a Retry button. |
-| **Backend unreachable** | Set `STUB_MODE = false` and don't run a server on `BACKEND_URL`. | Warning: "Loaded N caption lines, but the Orbit server isn't reachable...". **⋯ → Download captions JSON** still works. Asking shows a red "I can't reach the Orbit server" bubble. |
+| **Backend unreachable** | Set `STUB_MODE = false` and don't run a server on `BACKEND_URL`. | Warning: "Loaded N caption lines, but the Nova server isn't reachable...". **⋯ → Download captions JSON** still works. Asking shows a red "I can't reach the Nova server" bubble. |
 | **Backend up** | Set `STUB_MODE = false` and run Person 2's server. | "Loaded N caption lines"; replies come from the server, and chips change if the server sends them. |
 
 **Playback sync:** play, pause and seek, and watch the header. It reads "Following at M:SS" while playing and "Paused at M:SS" while paused, and it should match Panopto's own time display.
@@ -104,8 +104,8 @@ Open DevTools on the lecture page. Every Orbit log line starts with `[Orbit]`. *
 **The 90-second window:** send a question and check the console:
 
 ```
-[Orbit] /ask at 7:48 with 31 caption lines (6:18–7:50)
-[Orbit] /ask payload {lecture_id: "...", current_time: 468.2, question: "...", context: Array(31)}
+[Nova] /ask at 7:48 with 31 caption lines (6:18–7:50)
+[Nova] /ask payload {lecture_id: "...", current_time: 468.2, question: "...", context: Array(31)}
 ```
 
 Expand the payload to check that `context` is the right stretch of the transcript.
@@ -119,14 +119,14 @@ Expand the payload to check that `context` is the right stretch of the transcrip
 These were tested against a fake Panopto and Canvas (a local HTTPS server on a `*.panopto.com` hostname, loading this unpacked extension in Chrome for Testing), not a real Panopto login. Please check them:
 
 1. **Caption URL.** Confirm `GenerateSRT.ashx?id=<id>&language=0` returns SRT for the `id` in the Viewer/Embed URL. Also check `language=0` (English) is right for your courses.
-2. **What Panopto returns for a lecture with no captions.** Orbit treats an empty file, a file with no cues, or HTTP 404 as "no captions". If Panopto returns an HTML page instead, Orbit will wrongly say "not signed in".
-3. **What an expired session returns.** Orbit handles a redirect to a login path, 401/403, HTML instead of SRT, and a redirect to an SSO login on another domain (detected with a second `redirect: "manual"` request).
-4. **Title selectors.** `#deliveryTitle` and the others in `TITLE_SELECTORS` are guesses. Check which title the console prints (`[Orbit] Lecture detected` / `[Orbit] Lecture title`). If it falls back to `document.title`, add the right selector at the top of the list.
-5. **Which `<video>` Orbit follows.** Panopto can show several streams (slides, camera). Orbit prefers `video#primaryVideo` if it exists, and otherwise the most-loaded, largest video. Check that "Following at" matches Panopto's own clock, especially on lectures with edits (cut sections) or several streams. If they differ, caption times and `video.currentTime` aren't on the same timeline.
-6. **Keyboard shortcuts.** Type a sentence with spaces into Orbit's input. The video must not pause and seek along with it. Orbit blocks key events from its own input before Panopto sees them; this worked in testing but should be confirmed against Panopto's real handlers.
-7. **Canvas cookies.** Inside Canvas, the caption request uses the Panopto iframe's cookies. If Chrome blocks third-party cookies, the embed will ask the student to sign in, and Orbit will show "not signed in".
+2. **What Panopto returns for a lecture with no captions.** Nova treats an empty file, a file with no cues, or HTTP 404 as "no captions". If Panopto returns an HTML page instead, Nova will wrongly say "not signed in".
+3. **What an expired session returns.** Nova handles a redirect to a login path, 401/403, HTML instead of SRT, and a redirect to an SSO login on another domain (detected with a second `redirect: "manual"` request).
+4. **Title selectors.** `#deliveryTitle` and the others in `TITLE_SELECTORS` are guesses. Check which title the console prints (`[Nova] Lecture detected` / `[Nova] Lecture title`). If it falls back to `document.title`, add the right selector at the top of the list.
+5. **Which `<video>` Nova follows.** Panopto can show several streams (slides, camera). Nova prefers `video#primaryVideo` if it exists, and otherwise the most-loaded, largest video. Check that "Following at" matches Panopto's own clock, especially on lectures with edits (cut sections) or several streams. If they differ, caption times and `video.currentTime` aren't on the same timeline.
+6. **Keyboard shortcuts.** Type a sentence with spaces into Nova's input. The video must not pause and seek along with it. Nova blocks key events from its own input before Panopto sees them; this worked in testing but should be confirmed against Panopto's real handlers.
+7. **Canvas cookies.** Inside Canvas, the caption request uses the Panopto iframe's cookies. If Chrome blocks third-party cookies, the embed will ask the student to sign in, and Nova will show "not signed in".
 8. **Download inside Canvas.** If Canvas sandboxes the Panopto iframe without `allow-downloads`, the download may be blocked inside Canvas. It works when the lecture is opened directly.
 9. **Other hosts and URL casing.** Only `https://*.panopto.com/Panopto/Pages/Viewer.aspx*` and `Embed.aspx*` match. Schools on `panopto.eu` or a custom domain, or links using lowercase `viewer.aspx`, need extra entries in `manifest.json` (both `content_scripts.matches` and `host_permissions`).
-10. **Fullscreen.** When Panopto's player goes fullscreen, Orbit isn't visible. Only the fullscreen element is drawn, which is expected for now.
-11. **Switching lectures without a page load** (playlists, "next session"). Orbit checks the URL's `id` every second and reloads captions and chat when it changes. This is untested on real Panopto.
+10. **Fullscreen.** When Panopto's player goes fullscreen, Nova isn't visible. Only the fullscreen element is drawn, which is expected for now.
+11. **Switching lectures without a page load** (playlists, "next session"). Nova checks the URL's `id` every second and reloads captions and chat when it changes. This is untested on real Panopto.
 12. **Late title.** Captions are uploaded as soon as they load. If Panopto fills in the title later, the backend gets the `document.title` version (usually the same text).

@@ -1,9 +1,9 @@
 /*
- * Orbit: the on-page overlay (UI only).
+ * Nova: the on-page overlay (UI only).
  *
- * Renders the "Ask Orbit" card inside a Shadow DOM root so Panopto's CSS can't
+ * Renders the "Ask Nova" card inside a Shadow DOM root so Panopto's CSS can't
  * reach it and ours can't leak out. It knows nothing about captions, video or the
- * backend; content.js drives it through the API returned by OrbitOverlay.create().
+ * backend; content.js drives it through the API returned by NovaOverlay.create().
  *
  * Everything is built with DOM APIs (no innerHTML), and all text from captions,
  * the student or the backend is set with textContent.
@@ -76,13 +76,13 @@
    * Key events from inside a shadow root reach the page retargeted to our host
    * element, so Panopto can't tell the student is typing. This capture listener
    * on window must be installed before Panopto's own listeners (content.js runs
-   * at document_start), and it stops key events that start inside Orbit from
+   * at document_start), and it stops key events that start inside Nova from
    * reaching the page. Stopping propagation doesn't cancel default actions, so
    * typing still works and Enter still submits the form.
    */
   function installKeyGuard() {
-    if (root.__orbitKeyGuardInstalled) return;
-    root.__orbitKeyGuardInstalled = true;
+    if (root.__novaKeyGuardInstalled) return;
+    root.__novaKeyGuardInstalled = true;
     const guard = (event) => {
       if (!active || !event.composedPath().includes(active.host)) return;
       event.stopImmediatePropagation();
@@ -98,7 +98,7 @@
     try {
       css = await (await fetch(cssUrl)).text();
     } catch (err) {
-      console.warn("[Orbit] Could not load overlay.css", err);
+      console.warn("[Nova] Could not load overlay.css", err);
       return;
     }
     try {
@@ -113,21 +113,21 @@
   /**
    * @param {object} opts
    * @param {string} opts.cssUrl     chrome.runtime.getURL("overlay.css")
-   * @param {string} opts.mascotUrl  chrome.runtime.getURL("icons/orbit.png")
+   * @param {string} opts.mascotUrl  chrome.runtime.getURL("icons/nova.png")
    * @param {number} opts.windowSeconds  caption window shown in the strip
    * @param {(text: string, source: "input"|"chip") => void} opts.onSend
    * @param {() => void} opts.onDownload
    * @param {() => void} opts.onReloadCaptions
    * @param {() => void} opts.onClearChat
-   * @param {(msg: object) => void} opts.onExplain  "Explain in depth" clicked on an Orbit reply
+   * @param {(msg: object) => void} opts.onExplain  "Explain in depth" clicked on an Nova reply
    */
   function create(opts) {
     const o = Object.assign(
       {
         windowSeconds: 90,
-        welcome: "Hey! I'm Orbit. I'm following along with this lecture. Ask me anything about what was just said.",
+        welcome: "Hey! I'm Nova. I'm following along with this lecture. Ask me anything about what was just said.",
         placeholder: "Ask about what was just said...",
-        footer: "Orbit can make mistakes. Check important details.",
+        footer: "Nova can make mistakes. Check important details.",
         onSend() {},
         onDownload() {},
         onReloadCaptions() {},
@@ -139,7 +139,7 @@
     );
 
     // A custom tag name so no page selector like "div { ... }" matches the host.
-    const host = document.createElement("orbit-overlay");
+    const host = document.createElement("nova-overlay");
     host.style.cssText =
       "all: initial !important; display: block !important; position: fixed !important;" +
       "left: 0 !important; bottom: 0 !important; width: 0 !important; height: 0 !important;" +
@@ -151,7 +151,7 @@
 
     const statusText = h("span", { class: "status-text", text: "Looking for the video…" });
     const status = h("div", { class: "status", "data-state": "waiting" }, h("span", { class: "dot" }), statusText);
-    const title = h("h2", { class: "title", text: "Ask Orbit" });
+    const title = h("h2", { class: "title", text: "Ask Nova" });
 
     const menuTitle = h("div", { class: "menu-title", text: "—" });
     const menuId = h("div", { class: "menu-id", text: "—" });
@@ -174,7 +174,7 @@
       { class: "icon-btn", type: "button", "aria-label": "More options", "aria-haspopup": "menu", "aria-expanded": "false", title: "More" },
       icon("more")
     );
-    const minBtn = h("button", { class: "icon-btn", type: "button", "aria-label": "Minimize Orbit", title: "Minimize" }, icon("minimize"));
+    const minBtn = h("button", { class: "icon-btn", type: "button", "aria-label": "Minimize Nova", title: "Minimize" }, icon("minimize"));
 
     const header = h(
       "header",
@@ -188,14 +188,14 @@
     const contextText = h("span", { text: `Using the last ${o.windowSeconds} seconds of captions` });
     const contextStrip = h("div", { class: "context" }, icon("captions"), contextText);
 
-    const messages = h("div", { class: "messages", role: "log", "aria-live": "polite", "aria-label": "Conversation with Orbit" });
+    const messages = h("div", { class: "messages", role: "log", "aria-live": "polite", "aria-label": "Conversation with Nova" });
     const chips = h("div", { class: "chips", role: "group", "aria-label": "Suggested questions" });
 
     const input = h("input", {
       class: "input",
       type: "text",
       placeholder: o.placeholder,
-      "aria-label": "Ask Orbit a question",
+      "aria-label": "Ask Nova a question",
       maxlength: "1000",
       autocomplete: "off",
       spellcheck: "true",
@@ -206,7 +206,7 @@
 
     const card = h(
       "section",
-      { class: "card", role: "dialog", "aria-label": "Ask Orbit" },
+      { class: "card", role: "dialog", "aria-label": "Ask Nova" },
       header,
       contextStrip,
       messages,
@@ -214,8 +214,8 @@
       composer,
       footer
     );
-    const launcher = h("button", { class: "launcher", type: "button", "aria-label": "Open Orbit", title: "Ask Orbit" }, avatar("launch"));
-    const app = h("div", { class: "orbit", "data-minimized": "false" }, card, launcher);
+    const launcher = h("button", { class: "launcher", type: "button", "aria-label": "Open Nova", title: "Ask Nova" }, avatar("launch"));
+    const app = h("div", { class: "nova", "data-minimized": "false" }, card, launcher);
     shadow.append(app);
 
     // ---- State + behaviour ---------------------------------------------------
@@ -326,14 +326,14 @@
 
     // ---- Message rendering ---------------------------------------------------
     function messageRow(msg) {
-      const role = msg.role === "student" ? "student" : "orbit";
+      const role = msg.role === "student" ? "student" : "nova";
       const bubbleText = h("span", { class: "bubble-text" });
       bubbleText.append(parseMd(msg.text));
       const bubble = h("div", { class: "bubble" }, bubbleText);
       if (msg.stub) bubble.append(h("span", { class: "tag", text: "Demo reply (stub mode)" }));
       if (msg.watch) {
         const { start, end, label } = msg.watch;
-        const fmt = root.OrbitSRT ? root.OrbitSRT.formatTime : (t) => String(Math.floor(t));
+        const fmt = root.NovaSRT ? root.NovaSRT.formatTime : (t) => String(Math.floor(t));
         const timeStr = end && end !== start ? `${fmt(start)} – ${fmt(end)}` : fmt(start);
         const watchBtn = h(
           "button",
@@ -343,14 +343,14 @@
         );
         bubble.append(watchBtn);
       }
-      if (role === "orbit" && !msg.error && msg.at) {
+      if (role === "nova" && !msg.error && msg.at) {
         // Opens the whiteboard lesson tab (onExplain is wired up in content.js).
         bubble.append(
           h("button", { class: "deep-dive-btn", type: "button", onclick: () => o.onExplain(msg) }, "Deep Dive")
         );
       }
       const row = h("div", { class: `msg msg--${role}${msg.error ? " msg--error" : ""}` });
-      if (role === "orbit") row.append(avatar("sm"));
+      if (role === "nova") row.append(avatar("sm"));
       row.append(bubble);
       return row;
     }
@@ -390,15 +390,15 @@
         updateSendState();
       },
 
-      /** Use icons/orbit.png if it exists; otherwise avatars stay plain green circles. */
+      /** Use icons/nova.png if it exists; otherwise avatars stay plain green circles. */
       probeMascot() {
         if (!o.mascotUrl) return;
         const img = new Image();
         img.onload = () => {
-          app.style.setProperty("--orbit-mascot", `url("${o.mascotUrl}")`);
+          app.style.setProperty("--nova-mascot", `url("${o.mascotUrl}")`);
           app.classList.add("has-mascot");
         };
-        img.onerror = () => console.info("[Orbit] icons/orbit.png not found, using a plain avatar");
+        img.onerror = () => console.info("[Nova] icons/nova.png not found, using a plain avatar");
         img.src = o.mascotUrl;
       },
 
@@ -435,7 +435,7 @@
 
       /** state: "waiting" | "playing" | "paused". */
       setPlayback({ state, time }) {
-        const fmt = root.OrbitSRT ? root.OrbitSRT.formatTime : (t) => String(Math.floor(t));
+        const fmt = root.NovaSRT ? root.NovaSRT.formatTime : (t) => String(Math.floor(t));
         const text =
           state === "waiting" ? "Looking for the video…" : `${state === "paused" ? "Paused" : "Following"} at ${fmt(time)}`;
         if (text === lastStatus && status.dataset.state === state) return;
@@ -457,12 +457,12 @@
       setHistory(history) {
         typingEl = null;
         noticeEl = null;
-        messages.replaceChildren(messageRow({ role: "orbit", text: o.welcome }));
+        messages.replaceChildren(messageRow({ role: "nova", text: o.welcome }));
         for (const msg of history || []) messages.append(messageRow(msg));
         scrollToBottom();
       },
 
-      /** msg: { role: "student" | "orbit", text, stub?, error? } */
+      /** msg: { role: "student" | "nova", text, stub?, error? } */
       addMessage(msg) {
         appendRow(messageRow(msg));
       },
@@ -492,7 +492,7 @@
         if (on && !typingEl) {
           typingEl = h(
             "div",
-            { class: "msg msg--orbit msg--typing", "aria-label": "Orbit is typing" },
+            { class: "msg msg--nova msg--typing", "aria-label": "Nova is typing" },
             avatar("sm"),
             h("div", { class: "bubble typing" }, h("span"), h("span"), h("span"))
           );
@@ -522,5 +522,5 @@
     return api;
   }
 
-  root.OrbitOverlay = { create, installKeyGuard };
+  root.NovaOverlay = { create, installKeyGuard };
 })(globalThis);

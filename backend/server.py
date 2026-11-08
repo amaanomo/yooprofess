@@ -1,7 +1,9 @@
 """
 Minimal Orbit backend for local testing.
 
-    export ANTHROPIC_API_KEY=sk-ant-...
+    export ANTHROPIC_API_KEY=sk-ant-...   # for Claude (default)
+    export ORBIT_PROVIDER=gemini          # switch to Gemini
+    export GOOGLE_API_KEY=...             # required when using Gemini
     python3 backend/server.py
 
 Endpoints (see the "Backend contract" in extension/content.js):
@@ -14,16 +16,25 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import anthropic
+PROVIDER = os.environ.get("ORBIT_PROVIDER", "anthropic")  # provider for /ask
 
-MODEL = os.environ.get("ORBIT_MODEL", "claude-sonnet-5-5")
-EXPLAIN_MODEL = os.environ.get("ORBIT_EXPLAIN_MODEL", "claude-haiku-5-5")  # cheap model for whiteboard plans
+# Whiteboard lessons (/explain). Uses Gemini's free tier when a Gemini key is available, otherwise Claude Haiku.
+# Force one with ORBIT_EXPLAIN_PROVIDER=gemini|anthropic.
+EXPLAIN_MODEL = os.environ.get("ORBIT_EXPLAIN_MODEL", "claude-haiku-5-5")  # cheap Claude model for whiteboard plans
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash")  # tried if the first fails
-# Whiteboard lessons use Gemini's free tier when a key is set, otherwise Haiku. Force one with ORBIT_EXPLAIN_PROVIDER.
-EXPLAIN_PROVIDER = os.environ.get("ORBIT_EXPLAIN_PROVIDER") or ("gemini" if os.environ.get("GEMINI_API_KEY") else "anthropic")
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY") or (os.environ.get("GOOGLE_API_KEY") if PROVIDER == "gemini" else None)
+EXPLAIN_PROVIDER = os.environ.get("ORBIT_EXPLAIN_PROVIDER") or ("gemini" if GEMINI_KEY else "anthropic")
 PORT = int(os.environ.get("PORT", "8000"))
-client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
+
+if PROVIDER == "gemini":
+    import google.generativeai as genai
+    genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
+    MODEL = os.environ.get("ORBIT_MODEL", "gemini-2.0-flash")
+else:
+    import anthropic
+    client = anthropic.Anthropic()
+    MODEL = os.environ.get("ORBIT_MODEL", "claude-sonnet-4-6")
 
 LECTURES = {}  # lecture_id -> {"title": str, "captions": [...]}
 
@@ -73,19 +84,22 @@ def ask(body):
         transcript = transcript_text(body.get("context") or [])
         title = "(unknown)"
     now = fmt(body.get("current_time") or 0)
-    msg = client.messages.create(
-        model=MODEL,
-        max_tokens=600,
-        system=[{"type": "text", "text": SYSTEM}],
-        messages=[
-            {
-                "role": "user",
-                "content": f"Lecture: {title}\n\nTranscript:\n{transcript}\n\n"
-                f"The student is paused at {now}.\nQuestion: {body.get('question', '')}",
-            }
-        ],
+    user_msg = (
+        f"Lecture: {title}\n\nTranscript:\n{transcript}\n\n"
+        f"The student is paused at {now}.\nQuestion: {body.get('question', '')}"
     )
-    return "".join(b.text for b in msg.content if b.type == "text").strip()
+    if PROVIDER == "gemini":
+        gmodel = genai.GenerativeModel(MODEL, system_instruction=SYSTEM)
+        response = gmodel.generate_content(user_msg)
+        return response.text.strip()
+    else:
+        msg = client.messages.create(
+            model=MODEL,
+            max_tokens=600,
+            system=[{"type": "text", "text": SYSTEM}],
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        return "".join(b.text for b in msg.content if b.type == "text").strip()
 
 
 EXPLAIN_SYSTEM = """You are Professor Orbit, a patient tutor teaching a concept on a whiteboard to a student who is meeting it for the first time.
@@ -223,6 +237,16 @@ def parse_json_loose(text):
         return None
 
 
+def get_anthropic():
+    """The Anthropic client. It only exists at startup when ORBIT_PROVIDER isn't gemini, so create it on demand."""
+    global client
+    if "client" not in globals():
+        import anthropic
+
+        client = anthropic.Anthropic()
+    return client
+
+
 def generate_plan_text(system, prompt):
     """Ask the whiteboard model for the JSON plan. Gemini (free tier) if configured, else Haiku."""
     if EXPLAIN_PROVIDER == "gemini":
@@ -241,7 +265,7 @@ def generate_plan_text(system, prompt):
             req = urllib.request.Request(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                 data=json.dumps(payload).encode(),
-                headers={"Content-Type": "application/json", "x-goog-api-key": os.environ["GEMINI_API_KEY"]},
+                headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY or ""},
             )
             try:
                 with urllib.request.urlopen(req, timeout=25) as resp:
@@ -261,7 +285,7 @@ def generate_plan_text(system, prompt):
             last = f"{model}: empty response"
         raise RuntimeError(f"Gemini unavailable ({last})")
 
-    msg = client.messages.create(
+    msg = get_anthropic().messages.create(
         model=EXPLAIN_MODEL,
         max_tokens=3000,
         thinking={"type": "disabled"},  # thinking tokens would eat the budget and truncate the JSON
@@ -347,5 +371,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     explain_model = GEMINI_MODEL if EXPLAIN_PROVIDER == "gemini" else EXPLAIN_MODEL
-    print(f"Orbit backend on http://localhost:{PORT} | /ask: {MODEL} | /explain: {EXPLAIN_PROVIDER}/{explain_model}")
+    print(
+        f"Orbit backend on http://localhost:{PORT} | /ask: {PROVIDER}/{MODEL} | /explain: {EXPLAIN_PROVIDER}/{explain_model}",
+        flush=True,
+    )
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

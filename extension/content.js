@@ -100,7 +100,7 @@
   }
 
   /** POST <BACKEND_URL>/ask */
-  function buildAskPayload({ lectureId, currentTime, question, context, history, voice, language, frame }) {
+  function buildAskPayload({ lectureId, currentTime, question, context, history, voice, language, frame, source, title }) {
     const payload = {
       lecture_id: lectureId,
       current_time: Math.round(currentTime * 10) / 10,
@@ -108,6 +108,9 @@
       context: context.map((c) => ({ start: c.start, end: c.end, text: c.text })),
       history: buildHistory(history),
       voice: Boolean(voice),
+      // "typed" or "chip". Hot topics counts every real question (typed or spoken), never chip taps.
+      source: source === "chip" ? "chip" : "typed",
+      title,
     };
     // Only when translated subtitles are on, e.g. "Spanish (Español)". The reply comes back in it.
     if (language) payload.language = language;
@@ -122,6 +125,30 @@
       .filter((m) => m && !m.error && !m.local && typeof m.text === "string" && m.text.trim())
       .slice(-HISTORY_TURNS)
       .map((m) => ({ role: m.role === "student" ? "student" : "nova", text: m.text }));
+  }
+
+  /** POST <BACKEND_URL>/topics. refresh: rebuild if new questions came in since the last build. */
+  function buildTopicsPayload({ lectureId, refresh }) {
+    return { lecture_id: lectureId, refresh: Boolean(refresh) };
+  }
+
+  /**
+   * Expected /topics response:
+   * { "status": "ok"|"empty", "total_questions": 12, "updated_at": <epoch s>,
+   *   "topics": [{ "title", "summary", "count", "time", "examples": ["..."] }] }
+   */
+  function readTopicsResponse(data) {
+    const topics = (data && Array.isArray(data.topics) ? data.topics : [])
+      .filter((t) => t && typeof t.title === "string" && Number(t.count) > 0)
+      .map((t) => ({
+        title: t.title,
+        summary: typeof t.summary === "string" ? t.summary : "",
+        count: Math.floor(Number(t.count)),
+        time: Number.isFinite(Number(t.time)) ? Number(t.time) : 0,
+        examples: Array.isArray(t.examples) ? t.examples.filter((e) => typeof e === "string").slice(0, 3) : [],
+      }));
+    const total = data && Number.isFinite(Number(data.total_questions)) ? Number(data.total_questions) : 0;
+    return { status: data && data.status === "empty" ? "empty" : "ok", topics, total, updatedAt: data && data.updated_at };
   }
 
   /** Expected /ask response: { "reply": "...", "chips": ["...", ...] }  (chips optional). */
@@ -227,7 +254,7 @@
       cssUrl: chrome.runtime.getURL("overlay.css"),
       mascotUrl: chrome.runtime.getURL("icons/nova.png"),
       windowSeconds: CAPTION_WINDOW_SECONDS,
-      onSend: (text) => (text === SUMMARY_PROMPT ? summarize() : handleInput(text, { voice: false })),
+      onSend: (text, source) => (text === SUMMARY_PROMPT ? summarize() : handleInput(text, { voice: false, source })),
       onSummarize: () => summarize(),
       onExportNotes: exportNotes,
       onDownload: downloadJson,
@@ -244,6 +271,8 @@
       onOriginalAudio: setOriginalAudio,
       onRetryTranslation: () => subs.translator && subs.translator.retryFailed(),
       onLayoutChange: () => subs.ui && subs.ui.relayout(),
+      onOpenTopics: () => loadTopics(),
+      onRefreshTopics: () => loadTopics({ refresh: true }),
       onToggleVoice: (on) => voice.setVoiceReplies(on),
       onMic: () => voice.listen(),
       onStopSpeaking: () => voice.stopSpeaking(),
@@ -282,6 +311,7 @@
     state.lectureId = lectureId;
     state.captions = [];
     stopTranslation();
+    if (overlay.isTopicsOpen()) loadTopics(); // the Hot topics view follows the lecture
     state.title = resolveTitle();
     log("Lecture detected", { id: lectureId, title: state.title, frame: window === window.top ? "top" : "iframe" });
     overlay.setLecture({ id: lectureId, title: state.title });
@@ -878,7 +908,7 @@
    * else goes to the AI, which may answer or send back commands (e.g. "go to
    * where he talks about recursion").
    */
-  async function handleInput(text, { voice: spoken, alternatives = [] }) {
+  async function handleInput(text, { voice: spoken, alternatives = [], source }) {
     // Speech recognition gives several guesses ("pause the video" / "paws the video"):
     // run the first one that is a valid video command.
     for (const guess of [text, ...alternatives]) {
@@ -888,7 +918,7 @@
         return runCommand(guess, actions, { spoken });
       }
     }
-    await ask(text, { voice: spoken });
+    await ask(text, { voice: spoken, source });
   }
 
   function allVideos() {
@@ -969,7 +999,8 @@
   // Ask
   // ===========================================================================
 
-  async function ask(question, { voice: spoken = false } = {}) {
+  async function ask(question, { voice: spoken = false, source = "input" } = {}) {
+    if (overlay.isTopicsOpen()) overlay.showChat(); // answers (typed or spoken) appear in the chat
     if (state.busy) return;
     const lectureId = state.lectureId;
     const currentTime = getCurrentTime();
@@ -978,7 +1009,7 @@
     const language = lang ? `${lang.english} (${lang.label})` : null;
     const frame = captureFrame();
     const history = state.history.slice(); // before this question is added
-    const payload = buildAskPayload({ lectureId, currentTime, question, context, history, voice: spoken, language, frame });
+    const payload = buildAskPayload({ lectureId, currentTime, question, context, history, voice: spoken, language, frame, source, title: state.title });
 
     log(
       `/ask at ${formatTime(currentTime)} with ${context.length} caption lines` +
@@ -1251,6 +1282,7 @@
   const currentLanguage = () => SUBTITLE_LANGUAGES.find((l) => l.code === subs.language) || null;
 
   async function initSubtitles() {
+    if (typeof NovaSubtitles === "undefined" || typeof NovaVoice === "undefined") return;
     subs.ui = NovaSubtitles.create({ cssUrl: chrome.runtime.getURL("subtitles.css"), getCardRect: () => overlay.getCardRect() });
     await subs.ui.mount();
     subs.voiceEngine = NovaVoice.create({
@@ -1522,6 +1554,28 @@
       playbackRate: v ? v.playbackRate : 1,
       playing: Boolean(v && !v.paused && !v.ended),
     });
+  }
+
+  // ===========================================================================
+  // Part 6: hot topics (what students ask about most in this lecture)
+  // ===========================================================================
+
+  let topicsToken = 0;
+
+  async function loadTopics({ refresh = false } = {}) {
+    const lectureId = state.lectureId;
+    const token = ++topicsToken;
+    overlay.setTopics({ state: "loading" });
+    const res = await sendToBackground({ type: "NOVA_TOPICS", payload: buildTopicsPayload({ lectureId, refresh }) });
+    if (token !== topicsToken || lectureId !== state.lectureId) return;
+    if (!res.ok) {
+      warn("/topics failed", res.error, res.status || "", res.detail || "");
+      overlay.setTopics({ state: "error", error: `The Nova server isn't reachable right now (${backendErrorText(res)}).` });
+      return;
+    }
+    const { status, topics, total, updatedAt } = readTopicsResponse(res.data);
+    log(`Hot topics: ${topics.length} themes from ${total} questions`);
+    overlay.setTopics(status === "empty" || !topics.length ? { state: "empty" } : { state: "ready", topics, total, updatedAt });
   }
 
   // ===========================================================================

@@ -1,0 +1,120 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --void: #07080f;
+  --space: #0d0f1c;
+  --space-800: #131629;
+  --space-700: #1a1f38;
+  --space-600: #252a4d;
+  --nebula: #7c3aed;
+  --nebula-600: #6d28d9;
+  --nebula-500: #8b5cf6;
+  --comet: #a78bfa;
+  --aurora: #67e8f9;
+  --pulse: #c084fc;
+  --star: #f0e6ff;
+  --star-soft: rgba(240, 230, 255, 0.72);
+  --star-muted: rgba(240, 230, 255, 0.42);
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--void);
+  color: var(--star);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+}
+
+/* SVG board marker style */
+#layer line, #layer polyline, #layer rect, #layer circle {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#layer text {
+  font-family: "Bradley Hand", "Segoe Print", "Comic Sans MS", "Marker Felt", cursive;
+}
+
+/* Draw-on animation (shapes use pathLength="1") */
+.draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: draw 0.8s ease forwards;
+}
+.draw-late {
+  animation-delay: 0.55s;
+}
+@keyframes draw {
+  to { stroke-dashoffset: 0; }
+}
+
+.pop {
+  fill-opacity: 0;
+  animation: fillin 0.6s ease 0.45s forwards;
+}
+@keyframes fillin {
+  to { fill-opacity: 1; }
+}
+
+.fade {
+  opacity: 0;
+  animation: appear 0.5s ease 0.5s forwards;
+}
+@keyframes appear {
+  to { opacity: 1; }
+}
+
+/* Highlight: shapes in the current step */
+.hl {
+  stroke: var(--aurora) !important;
+  filter: drop-shadow(0 0 0.6px rgba(103, 232, 249, 0.7));
+}
+.hl-text {
+  fill: var(--aurora) !important;
+}
+
+/* Pulsing pointer dot */
+.pointer {
+  fill: var(--aurora);
+  opacity: 0.9;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pulse 1.1s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.7); opacity: 0.35; }
+}
+
+/* Avatar talking animation */
+.talking #mouth {
+  animation: talk 0.28s ease-in-out infinite alternate;
+}
+@keyframes talk {
+  from { d: path("M23 44 Q30 50 37 44"); }
+  to   { d: path("M23 42 Q30 54 37 42"); }
+}
+
+/* Custom scrollbar for the outline */
+.outline-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.outline-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.outline-scroll::-webkit-scrollbar-thumb {
+  background: var(--space-600);
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .draw, .pop, .fade, .pointer, .talking #mouth {
+    animation: none;
+  }
+}

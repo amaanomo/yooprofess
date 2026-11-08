@@ -14,6 +14,10 @@
  *   - Several guesses: Chrome returns up to MAX_ALTERNATIVES hypotheses; the wake
  *     word may be in any of them, and content.js runs the first one that is a
  *     valid video command.
+ *   - Rewritten wake phrase: Chrome may hear "hey nova" at first, then finalize
+ *     the same audio as "hangover", or split it ("hey" + "Nova"). Leftover wake
+ *     words are stripped, never taken as the question, and no question is taken
+ *     within WAKE_GRACE_MS of the wake.
  *   - Settling: a question ends when Chrome marks it final OR when the words stop
  *     changing for SETTLE_MS (background noise can keep Chrome "listening" forever).
  *   - Self-healing: if Chrome never starts a session (no onstart), a watchdog
@@ -43,8 +47,19 @@
   const NAMES = ["nova", "novah", "nover", "nava", "innova", "noah"];
   const WAKE_RE = new RegExp(`\\b(?:${GREETINGS.join("|")})[\\s,.!-]*(?:${NAMES.join("|")})\\b[\\s,.!?-]*`, "i");
 
-  const QUESTION_WAIT_MS = 8000; // after "Hey Nova" with nothing else, wait this long for the question
-  const SETTLE_MS = 1200; // words unchanged this long = the student finished (even if Chrome isn't "final")
+  // Chrome often hears "hey nova" in its interim guess, then rewrites the same audio
+  // ("hangover", "hey no va", ...) or splits it across two results ("hey" + "Nova").
+  // Leading words from this list are stripped off the question after a wake, and a
+  // "question" made only of them is ignored. Used only for stripping, never to wake.
+  const WAKE_WORDS = new Set([
+    ...GREETINGS, ...NAMES,
+    "hangover", "hang", "hand", "and", "over", "a", "no", "va", "vah", "nov", "nove", "novo", "nora", "heynova", "hennova",
+  ]);
+  const MAX_WAKE_WORDS = 4; // never strip more than this many leading words
+
+  const QUESTION_WAIT_MS = 10000; // after "Hey Nova" with nothing else, wait this long for the question
+  const SETTLE_MS = 2000; // words unchanged this long = the student finished (even if Chrome isn't "final")
+  const WAKE_GRACE_MS = 1500; // never take a question sooner than this after "Hey Nova" (Chrome may still rewrite it)
   const MAX_ALTERNATIVES = 5;
   const START_TIMEOUT_MS = 4000; // no onstart this long after start() = Chrome stalled: retry
 
@@ -59,6 +74,28 @@
     network: "Speech recognition needs an internet connection. Retrying…",
     "language-not-supported": "That language isn't supported for speech recognition.",
   };
+
+  const wakeish = (w) => WAKE_WORDS.has(w.toLowerCase().replace(/[^a-z]/g, ""));
+
+  /**
+   * The question part of the result where "Hey Nova" was heard. Chrome may have
+   * rewritten the wake phrase since ("hey nova" -> "hangover"), so if the wake
+   * phrase is gone, a 1-2 word result is taken to be the misheard wake phrase
+   * itself (the question comes in the next result).
+   */
+  function stripWake(t) {
+    const m = WAKE_RE.exec(t);
+    if (m) return t.slice(m.index + m[0].length);
+    return t.trim().split(/\s+/).length <= 2 ? "" : t;
+  }
+
+  /** Drop leftover wake words ("Nova", "hang over", ...) from the start of a question. */
+  function stripLeadingWake(text) {
+    const words = text.split(" ");
+    let k = 0;
+    while (k < words.length && k < MAX_WAKE_WORDS && wakeish(words[k])) k++;
+    return words.slice(k).join(" ");
+  }
 
   /** Text of every alternative in a SpeechRecognitionResult, best first, de-duplicated. */
   function guesses(result) {
@@ -87,6 +124,7 @@
       qFrom: null, // { index, wake } where the question starts
       qTimer: null,
       settleTimer: null,
+      wakeAt: 0, // when question mode began (WAKE_GRACE_MS counts from here)
       lastText: "",
       lastAlts: [],
       fatal: null,
@@ -278,13 +316,7 @@
       // Question mode: everything after the wake phrase, for each guess of the latest segment.
       const from = s.qFrom.index;
       if (from >= results.length) return;
-      const strip = (t, i) => {
-        if (i === from && s.qFrom.wake) {
-          const m = WAKE_RE.exec(t);
-          return m ? t.slice(m.index + m[0].length) : t;
-        }
-        return t;
-      };
+      const strip = (t, i) => (i === from && s.qFrom.wake ? stripWake(t) : t);
       // In the segment with the wake phrase, prefer the guesses that actually contain it
       // (the top guess may be "hey no va skip to 2:00" while guess 2 is "hey nova skip to 2:00").
       const ranked = (i) => {
@@ -300,23 +332,30 @@
       const lastIndex = results.length - 1;
       const last = results[lastIndex];
       if (!last.isFinal) allFinal = false;
-      const clean = (t) => t.replace(/\s+/g, " ").trim();
+      const clean = (t) => {
+        const c = t.replace(/\s+/g, " ").trim();
+        // After "Hey Nova", leftover wake words (split or rewritten by Chrome) aren't the question.
+        return s.qFrom.wake ? stripLeadingWake(c) : c;
+      };
       const alts = ranked(lastIndex).map((t) => clean(prefix + " " + strip(t, lastIndex))).filter(Boolean);
       const text = alts[0] || "";
-      if (!text) return;
+      if (!text) return; // only the wake phrase so far: keep waiting for the question
 
       h.onInterim(text);
       s.lastText = text;
       s.lastAlts = alts.slice(1);
-      if (allFinal) return finishQuestion();
-      // Not final yet: finish anyway once the words stop changing (noise can keep Chrome waiting).
+      // Final = finish now, otherwise once the words stop changing (noise can keep
+      // Chrome waiting). Either way, not within WAKE_GRACE_MS of "Hey Nova".
+      const grace = Math.max(0, s.wakeAt + WAKE_GRACE_MS - Date.now());
+      const wait = allFinal ? grace : Math.max(SETTLE_MS, grace);
       clearTimeout(s.settleTimer);
+      if (wait === 0) return finishQuestion();
       s.settleTimer = setTimeout(() => {
         if (s.mode === "question" && s.lastText === text) {
-          console.log("[Nova] Question settled (Chrome hadn't finalized it)");
+          if (!allFinal) console.log("[Nova] Question settled (Chrome hadn't finalized it)");
           finishQuestion();
         }
-      }, SETTLE_MS);
+      }, wait);
     }
 
     function finishQuestion() {
@@ -332,6 +371,7 @@
     function beginQuestion(from) {
       s.mode = "question";
       s.qFrom = from;
+      s.wakeAt = Date.now();
       s.lastText = "";
       s.lastAlts = [];
       clearTimeout(s.qTimer);

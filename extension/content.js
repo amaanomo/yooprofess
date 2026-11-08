@@ -61,13 +61,16 @@
   }
 
   /** POST <BACKEND_URL>/ask */
-  function buildAskPayload({ lectureId, currentTime, question, context }) {
-    return {
+  function buildAskPayload({ lectureId, currentTime, question, context, language }) {
+    const payload = {
       lecture_id: lectureId,
       current_time: Math.round(currentTime * 10) / 10,
       question,
       context: context.map((c) => ({ start: c.start, end: c.end, text: c.text })),
     };
+    // Only when translated subtitles are on, e.g. "Spanish (Español)". The reply comes back in it.
+    if (language) payload.language = language;
+    return payload;
   }
 
   /** Expected /ask response: { "reply": "...", "chips": ["...", ...] }  (chips optional). */
@@ -76,6 +79,30 @@
     const reply = data && (data.reply ?? data.answer ?? data.message);
     const chips = data && Array.isArray(data.chips) && data.chips.length ? data.chips : null;
     return { reply: typeof reply === "string" && reply.trim() ? reply : null, chips };
+  }
+
+  /**
+   * POST <BACKEND_URL>/translate
+   * cues: [{ i, start, end, text }] where i is the cue's index in the full caption list.
+   */
+  function buildTranslatePayload({ lectureId, title, targetLanguage, cues }) {
+    return {
+      lecture_id: lectureId,
+      target_language: targetLanguage,
+      title,
+      cues: cues.map((c) => ({ i: c.i, start: c.start, end: c.end, text: c.text })),
+    };
+  }
+
+  /** Expected /translate response: { "translations": [{ "i": 120, "text": "...", "fallback"?: true }] } */
+  function readTranslateResponse(data) {
+    const list = data && Array.isArray(data.translations) ? data.translations : [];
+    const out = {};
+    for (const t of list) {
+      // Fallback entries are the untranslated original; leave those cues untranslated so they can be retried.
+      if (t && Number.isInteger(t.i) && typeof t.text === "string" && t.text.trim() && !t.fallback) out[t.i] = t.text.trim();
+    }
+    return out;
   }
 
   // ===========================================================================

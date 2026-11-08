@@ -24,7 +24,7 @@ const BACKEND_URL = "https://yooprofess-production.up.railway.app";
  */
 const STUB_MODE = false;
 
-const TIMEOUT_MS = { lectures: 20000, ask: 45000 };
+const TIMEOUT_MS = { lectures: 20000, ask: 45000, translate: 60000 };
 
 importScripts("srt.js"); // for OrbitSRT.formatTime in stub replies
 
@@ -65,6 +65,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     askBackend(msg.payload).then(sendResponse);
     return true;
   }
+  if (msg.type === "ORBIT_TRANSLATE") {
+    translateBackend(msg.payload).then(sendResponse);
+    return true;
+  }
 });
 
 async function uploadLecture(payload) {
@@ -84,6 +88,18 @@ async function askBackend(payload) {
     return { ok: true, stub: true, data: stubAskReply(payload) };
   }
   return postJSON("/ask", payload, TIMEOUT_MS.ask);
+}
+
+async function translateBackend(payload) {
+  const count = Array.isArray(payload.cues) ? payload.cues.length : 0;
+  if (STUB_MODE) {
+    // Fake translation so the subtitle UI can be demoed offline: "[ES] original text".
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const tag = `[${String(payload.target_language).split("-")[0].toUpperCase()}] `;
+    return { ok: true, stub: true, data: { translations: payload.cues.map((c) => ({ i: c.i, text: tag + c.text })) } };
+  }
+  log(`POST /translate ${payload.lecture_id} -> ${payload.target_language} (${count} cues)`);
+  return postJSON("/translate", payload, TIMEOUT_MS.translate);
 }
 
 /**

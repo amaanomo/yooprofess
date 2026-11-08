@@ -6,7 +6,7 @@ Gemini when GEMINI_API_KEY (or GOOGLE_API_KEY) is set, otherwise Claude when ANT
 /ask and /translate use that provider. /explain (whiteboard lessons) has its own settings below.
 
     export GEMINI_API_KEY=...            # or ANTHROPIC_API_KEY=sk-ant-...
-    export ELEVENLABS_API_KEY=...        # optional: only for the ElevenLabs voice engine
+    export ELEVENLABS_API_KEY=...        # Nova's voice (falls back to free Chrome voices without it)
     python3 backend/server.py
 
 Models: GEMINI_MODEL (default gemini-3.5-flash-lite), NOVA_MODEL for Claude (default claude-sonnet-5-5).
@@ -18,13 +18,18 @@ Endpoints (see the "Backend contract" in extension/content.js):
   POST /summary    summary, key points and timestamped chapters for a lecture
   POST /explain    whiteboard lesson plan
   POST /topics     hot topics: the lecture's most-asked themes (see topics.py; set NOVA_DB_PATH on Railway)
-  GET  /voices     ElevenLabs voices (optional voice engine)
-  POST /tts        {text, voice_id} -> audio/mpeg (ElevenLabs)
-  POST /transcribe raw audio body -> {text} (ElevenLabs Scribe)
+  GET  /voices     built-in ElevenLabs voices (the ones every plan can use)
+  POST /tts        {text, voice_id?, language_code?} -> audio/mpeg (ElevenLabs, English only)
+  POST /tts/stream same body -> audio/mpeg streamed as it's generated (lower latency)
+  POST /transcribe raw audio body -> {text} (ElevenLabs Scribe v2)
+
+ElevenLabs speaks English only (other languages use Chrome voices in the extension).
+Settings: ELEVENLABS_TTS_MODEL (default eleven_flash_v2_5), ELEVENLABS_STT_MODEL (default scribe_v2),
+ELEVENLABS_DEFAULT_VOICE (default Brian, a built-in voice). A local .env file is loaded if python-dotenv is installed.
 
 /ask also takes "history" (recent chat turns, for follow-ups) and "voice" (the question
-was spoken: answer briefly for text-to-speech). The extension's default voice engine is
-free and runs in Chrome; ElevenLabs is optional.
+was spoken: answer briefly for text-to-speech). The extension uses ElevenLabs when the
+server has a key ("auto" engine) and falls back to free Chrome voices otherwise.
 """
 import base64
 import json
@@ -32,10 +37,15 @@ import os
 import re
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
-import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+try:  # local dev: read keys from .env (Railway sets real env vars)
+    from dotenv import load_dotenv
+
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
+except ImportError:
+    pass
 
 import topics as hot_topics
 
@@ -627,6 +637,12 @@ def explain(body):
     else:
         prompt += "Teach this concept on the whiteboard."
         system, max_steps = EXPLAIN_SYSTEM + LEVEL_HINTS.get(body.get("level"), ""), 8
+    language = str(body.get("language") or "").strip()[:60]
+    if language:
+        system += (
+            f"\n\nTeach the whole lesson in {language}: the title, every step's head and say, and all text "
+            "drawn on the board. Keep the JSON keys and shape names in English."
+        )
 
     for _ in range(2):  # one retry if the model returns bad JSON
         text = generate_plan_text(system, prompt)
@@ -638,15 +654,20 @@ def explain(body):
     return {"title": "Explanation", "steps": [{"head": "Explanation", "say": fallback, "clear": False, "draw": []}]}
 
 
-# ------------------------------------------- ElevenLabs (optional voice engine) ---
+# ---------------------------------------------------- ElevenLabs (voice engine) ---
+# Uses the official SDK (pip install elevenlabs), which reads ELEVENLABS_API_KEY.
 
 ELEVEN_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
-ELEVEN_BASE = "https://api.elevenlabs.io"
+# ElevenLabs speaks English only; every other language uses free Chrome voices in the extension.
+# Flash v2.5 is the low-latency model (~75ms) for answers and whiteboard narration.
 ELEVEN_TTS_MODEL = os.environ.get("ELEVENLABS_TTS_MODEL", "eleven_flash_v2_5")
-ELEVEN_STT_MODEL = os.environ.get("ELEVENLABS_STT_MODEL", "scribe_v1")
-ELEVEN_DEFAULT_VOICE = os.environ.get("ELEVENLABS_DEFAULT_VOICE", "21m00Tcm4TlvDq8ikWAM")  # "Rachel"
+ELEVEN_STT_MODEL = os.environ.get("ELEVENLABS_STT_MODEL", "scribe_v2")
+# Built-in voices work on every plan; the free plan can't use Voice Library voices through the API.
+ELEVEN_DEFAULT_VOICE = os.environ.get("ELEVENLABS_DEFAULT_VOICE", "nPczCjzI2devNBz1zQrb")  # Brian: deep, resonant
+ELEVEN_FORMAT = "mp3_44100_128"
 MAX_BODY = 25 * 1024 * 1024
 _voices_cache = {"at": 0, "data": None}
+_eleven_client = None
 
 
 class VoiceError(Exception):
@@ -655,31 +676,41 @@ class VoiceError(Exception):
         self.status = status
 
 
-def eleven(method, path, data=None, headers=None, timeout=45):
-    """Call ElevenLabs. Returns (body bytes, content type)."""
+def eleven():
+    """The ElevenLabs client, created on first use."""
+    global _eleven_client
     if not ELEVEN_KEY:
-        raise VoiceError(503, "ELEVENLABS_API_KEY is not set on the server (the free Chrome voice engine doesn't need it)")
-    req = urllib.request.Request(ELEVEN_BASE + path, data=data, method=method, headers={"xi-api-key": ELEVEN_KEY, **(headers or {})})
+        raise VoiceError(503, "ELEVENLABS_API_KEY is not set on the server (Nova falls back to Chrome voices)")
+    if _eleven_client is None:
+        from elevenlabs import ElevenLabs
+
+        _eleven_client = ElevenLabs(api_key=ELEVEN_KEY, timeout=45)
+    return _eleven_client
+
+
+def eleven_call(fn):
+    """Run an SDK call, turning API failures into VoiceError (502) for the extension."""
+    from elevenlabs.core import ApiError
+
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read(), resp.headers.get("Content-Type", "")
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode(errors="replace")[:200]
-        raise VoiceError(502, f"ElevenLabs HTTP {e.code}: {detail}")
+        return fn()
+    except ApiError as e:
+        raise VoiceError(502, f"ElevenLabs HTTP {e.status_code}: {str(e.body)[:200]}")
 
 
 def list_voices():
     if _voices_cache["data"] and time.time() - _voices_cache["at"] < 600:
         return _voices_cache["data"]
-    raw, _ = eleven("GET", "/v1/voices", timeout=15)
     voices = []
-    for v in json.loads(raw).get("voices", []):
-        labels = v.get("labels") or {}
+    for v in eleven_call(lambda: eleven().voices.get_all().voices):
+        if v.category != "premade":
+            continue  # only built-in voices (library voices need a paid plan through the API)
+        labels = v.labels or {}
         voices.append({
-            "voice_id": v.get("voice_id"),
-            "name": v.get("name"),
+            "voice_id": v.voice_id,
+            "name": v.name,
             "labels": {k: labels[k] for k in ("accent", "gender", "age", "description") if labels.get(k)},
-            "preview_url": v.get("preview_url"),
+            "preview_url": v.preview_url,
         })
     voices.sort(key=lambda v: (v["name"] or "").lower())
     data = {"voices": voices, "default": ELEVEN_DEFAULT_VOICE}
@@ -694,31 +725,52 @@ def speakable(text):
     return text.strip()
 
 
-def tts(text, voice_id):
-    text = speakable(text)[:2500]
+def tts_request(body):
+    """Keyword arguments for text_to_speech.convert/stream from a /tts request body {text, voice_id?, language_code?}.
+
+    English only: any other language_code gets a 409, and the extension uses a Chrome voice for it.
+    """
+    text = speakable(body.get("text"))[:2500]
     if not text:
         raise VoiceError(400, "text is empty")
-    path = f"/v1/text-to-speech/{urllib.parse.quote(voice_id or ELEVEN_DEFAULT_VOICE)}?output_format=mp3_44100_128"
-    body = json.dumps({"text": text, "model_id": ELEVEN_TTS_MODEL}).encode()
-    audio, _ = eleven("POST", path, body, {"Content-Type": "application/json", "Accept": "audio/mpeg"})
-    return audio
+    lang = str(body.get("language_code") or "en").split("-")[0].lower()
+    if lang != "en":
+        raise VoiceError(409, f"ElevenLabs is only used for English, not '{lang}' (use the browser voice)")
+    return {
+        "voice_id": str(body.get("voice_id") or ELEVEN_DEFAULT_VOICE),
+        "text": text,
+        "model_id": ELEVEN_TTS_MODEL,
+        "output_format": ELEVEN_FORMAT,
+        "language_code": "en",
+    }
+
+
+def tts(body):
+    """The whole clip as MP3 bytes."""
+    args = tts_request(body)
+    return eleven_call(lambda: b"".join(eleven().text_to_speech.convert(**args)))
+
+
+def tts_stream(body):
+    """An iterator of MP3 chunks. The first chunk is fetched here so API errors surface before headers go out."""
+    args = tts_request(body)
+    chunks = eleven_call(lambda: iter(eleven().text_to_speech.stream(**args, optimize_streaming_latency=3)))
+    first = eleven_call(lambda: next(chunks, b""))
+    return first, chunks
 
 
 def transcribe(audio, content_type):
     if not audio:
         raise VoiceError(400, "no audio")
     ext = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/mp4": "m4a"}.get(content_type, "webm")
-    boundary = uuid.uuid4().hex
-    parts = []
-    for name, value in (("model_id", ELEVEN_STT_MODEL), ("tag_audio_events", "false")):
-        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
-    parts.append(
-        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="question.{ext}"\r\n'
-        f"Content-Type: {content_type}\r\n\r\n".encode() + audio + b"\r\n"
+    result = eleven_call(
+        lambda: eleven().speech_to_text.convert(
+            model_id=ELEVEN_STT_MODEL,
+            file=(f"question.{ext}", audio, content_type),
+            tag_audio_events=False,
+        )
     )
-    parts.append(f"--{boundary}--\r\n".encode())
-    raw, _ = eleven("POST", "/v1/speech-to-text", b"".join(parts), {"Content-Type": f"multipart/form-data; boundary={boundary}"})
-    return (json.loads(raw).get("text") or "").strip()
+    return (result.text or "").strip()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -735,6 +787,25 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_stream(self, first, chunks, content_type):
+        """HTTP/1.0-style streaming: no Content-Length, the connection closes when audio ends."""
+        self.send_response(200)
+        self._cors()
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        try:
+            if first:
+                self.wfile.write(first)
+                self.wfile.flush()
+            for chunk in chunks:
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # the student interrupted: the client stopped reading
+
     def _send(self, code, obj):
         self._send_bytes(code, json.dumps(obj).encode(), "application/json")
 
@@ -748,7 +819,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/voices":
                 return self._send(200, list_voices())
             if self.path in ("/", "/health"):
-                return self._send(200, {"ok": True, "provider": PROVIDER, "model": MODEL, "elevenlabs": bool(ELEVEN_KEY)})
+                return self._send(200, {"ok": True, "provider": PROVIDER, "model": MODEL, "elevenlabs": bool(ELEVEN_KEY), "voice": ELEVEN_DEFAULT_VOICE})
             self._send(404, {"error": "not found"})
         except VoiceError as e:
             self._send(e.status, {"error": str(e)})
@@ -767,7 +838,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"text": transcribe(raw, content_type)})
             body = json.loads(raw or b"{}")
             if self.path == "/tts":
-                return self._send_bytes(200, tts(body.get("text"), body.get("voice_id")), "audio/mpeg")
+                return self._send_bytes(200, tts(body), "audio/mpeg")
+            if self.path == "/tts/stream":
+                first, chunks = tts_stream(body)
+                return self._send_stream(first, chunks, "audio/mpeg")
             if self.path == "/lectures":
                 LECTURES[body["lecture_id"]] = {
                     "title": body.get("title", ""),

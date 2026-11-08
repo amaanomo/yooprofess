@@ -15,12 +15,26 @@
       wakeWordEnabled: true,
       voiceReplies: true,
       pauseVideoOnWake: true,
-      /** "chrome" = free (chrome.tts + Chrome speech recognition); "elevenlabs" = premium, needs the server key. */
-      voiceEngine: "chrome",
+      /**
+       * "auto" = ElevenLabs when the server has ELEVENLABS_API_KEY, else Chrome (default);
+       * "elevenlabs" = always ElevenLabs; "chrome" = free (chrome.tts + Chrome speech recognition).
+       */
+      voiceEngine: "auto",
       voiceName: "", // chrome.tts voice ("" = Chrome default)
       voiceRate: 1.05,
       voiceId: "", // ElevenLabs voice ("" = server default)
       language: "", // speech recognition language ("" = browser language)
+      settingsVersion: 2,
+    },
+
+    /**
+     * Before v2, voiceEngine "chrome" was the default and got saved with every settings change,
+     * so it isn't a real choice: move those to "auto" (ElevenLabs when available). v2+ keeps
+     * whatever the student picks, including "chrome".
+     */
+    migrateSettings(stored) {
+      if (!stored || (stored.settingsVersion || 1) >= 2) return stored;
+      return { ...stored, voiceEngine: stored.voiceEngine === "elevenlabs" ? "elevenlabs" : "auto", settingsVersion: 2 };
     },
   };
 })(globalThis);

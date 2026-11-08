@@ -15,7 +15,7 @@
 
   const SETTINGS_KEY = "nova:settings";
   // Keep in sync with NovaConfig.DEFAULT_SETTINGS (config.js isn't loaded into pages).
-  const DEFAULTS = { wakeWordEnabled: true, voiceReplies: true, pauseVideoOnWake: true, voiceEngine: "chrome" };
+  const DEFAULTS = { wakeWordEnabled: true, voiceReplies: true, pauseVideoOnWake: true, voiceEngine: "auto" };
 
   /** False once the extension was reloaded/updated: this copy is disconnected. */
   function alive() {
@@ -172,14 +172,15 @@
       /** Called by the page after it (re)creates its overlay. */
       sync: syncOverlay,
 
-      speak(text) {
+      /** lang: BCP-47 language of the reply (e.g. "es-ES"); empty = English. */
+      speak(text, lang = "") {
         // Replies use **bold**, `code` and list markdown; don't let the voice read the markup.
         const spoken = String(text || "")
           .replace(/[*`]+/g, "")
           .replace(/^\s*(?:[-•]|\d+[.)])\s+/gm, "")
           .trim();
         if (!settings.voiceReplies || !spoken) return;
-        send({ type: "NOVA_SPEAK", text: spoken }); // background picks the engine + voice
+        send({ type: "NOVA_SPEAK", text: spoken, lang }); // background picks the engine + voice for the language
       },
       stopSpeaking() {
         send({ type: "NOVA_STOP_SPEAKING" });

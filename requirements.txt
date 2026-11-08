@@ -1,2 +1,4 @@
 google-genai
 anthropic
+elevenlabs>=2.77
+python-dotenv

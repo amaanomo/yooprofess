@@ -1058,8 +1058,10 @@
     saveMessage(msg);
     overlay.addMessage(msg);
     if (chips) overlay.setChips(chips);
-    // Spoken questions get spoken answers (unless the header toggle is set to text only).
-    if (spoken) voice.speak(clean);
+    // Spoken questions get spoken answers (unless the header toggle is set to text only),
+    // in the subtitle language when one is picked (the answer is written in it).
+    const replyLang = currentLanguage();
+    if (spoken) voice.speak(clean, replyLang ? replyLang.speechLang : "");
   }
 
   // ---- Export notes ------------------------------------------------------------
@@ -1162,6 +1164,12 @@
     overlay.addMessage(msg);
   }
 
+  /** The whiteboard teaches in the subtitle language when one is picked. */
+  function lessonLanguage() {
+    const lang = currentLanguage();
+    return lang ? { language: `${lang.english} (${lang.label})`, speech_lang: lang.speechLang } : {};
+  }
+
   // Opens the whiteboard tab (explain.html) for an Nova reply.
   function explainInDepth(msg) {
     sendToBackground({
@@ -1171,6 +1179,7 @@
         question: msg.question || "",
         reply: msg.text,
         current_time: msg.time || 0,
+        ...lessonLanguage(),
       },
     });
   }

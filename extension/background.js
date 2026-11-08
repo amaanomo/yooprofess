@@ -24,7 +24,7 @@ const BACKEND_URL = "https://yooprofess-production.up.railway.app";
  */
 const STUB_MODE = false;
 
-const TIMEOUT_MS = { lectures: 20000, ask: 45000, explain: 60000, translate: 60000 };
+const TIMEOUT_MS = { lectures: 20000, ask: 45000, explain: 60000, translate: 60000, topics: 45000 };
 
 importScripts("srt.js"); // for NovaSRT.formatTime in stub replies
 
@@ -82,6 +82,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     postJSON("/explain", msg.payload, TIMEOUT_MS.explain).then(sendResponse);
     return true;
   }
+  if (msg.type === "NOVA_TOPICS") {
+    topicsBackend(msg.payload).then(sendResponse);
+    return true;
+  }
 });
 
 async function uploadLecture(payload) {
@@ -101,6 +105,30 @@ async function askBackend(payload) {
     return { ok: true, stub: true, data: stubAskReply(payload) };
   }
   return postJSON("/ask", payload, TIMEOUT_MS.ask);
+}
+
+async function topicsBackend(payload) {
+  if (STUB_MODE) {
+    // Sample themes so the Hot topics view can be demoed offline.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const now = Date.now() / 1000;
+    return {
+      ok: true,
+      stub: true,
+      data: {
+        status: "ok",
+        total_questions: 12,
+        updated_at: now - 120,
+        topics: [
+          { title: "Few-shot vs fine-tuning", summary: "Students mix up giving examples in the prompt with retraining the model.", count: 6, time: 750, examples: ["Is few-shot prompting a kind of training?", "When would you fine-tune instead of adding examples?"] },
+          { title: "Why run a local model", summary: "Unclear what you gain from running the model on your own machine.", count: 4, time: 1210, examples: ["What's the benefit of a local model over an API?"] },
+          { title: "Structured output", summary: "How to make the model return fields reliably.", count: 2, time: 1585, examples: ["How do you force the answer into JSON?"] },
+        ],
+      },
+    };
+  }
+  log(`POST /topics ${payload.lecture_id}${payload.refresh ? " (refresh)" : ""}`);
+  return postJSON("/topics", payload, TIMEOUT_MS.topics);
 }
 
 async function translateBackend(payload) {

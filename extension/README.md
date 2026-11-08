@@ -109,6 +109,23 @@ Response (one entry per input `i`; `"fallback": true` means the server couldn't 
 - Translation starts where the student is, then fills in the rest. Progress shows on the strip button and in the popover. Lines the server can't translate show the original text, and the popover offers **Retry**.
 - The setting is remembered across lectures; translations are cached per lecture and language.
 
+## Hot topics
+
+The **🔥 Hot topics** pill (left of the strip under the header) swaps the chat for a view of what students ask about most **in this lecture**: up to 6 themes, each with how many questions it covers, a one-line summary, a ▶ timestamp that jumps to where it comes up, and 2–3 example questions **reworded by the AI** (no student's exact words are shown). With no questions yet, it says "No questions yet". **← Back to chat**, Escape, or asking a question returns to the chat.
+
+- Every **typed** question is saved anonymously on the backend (question, time in the video, when it was asked; no identity). **Chip taps aren't counted.** `/ask` now carries `"source": "typed" | "chip"` and the lecture `"title"`.
+- Themes are built by the model when someone opens the view and cached; they're rebuilt after 3 new questions, or when there's anything new and the themes are 10+ minutes old. **↻ Refresh** only rebuilds when new questions have come in.
+- **Railway:** questions live in a SQLite file. Attach a **Volume** and set `NOVA_DB_PATH=/data/nova.db`, or questions are lost on every redeploy.
+
+**`POST <BACKEND_URL>/topics`** `{ "lecture_id": "...", "refresh": false }` →
+
+```json
+{ "status": "ok", "total_questions": 12, "updated_at": 1794100000,
+  "topics": [{ "title": "Few-shot vs fine-tuning", "summary": "...", "count": 6, "time": 750.0, "examples": ["..."] }] }
+```
+
+`"status": "empty"` (with no topics) when the lecture has no questions yet. In `STUB_MODE` the extension shows sample themes.
+
 ## What gets stored
 
 All of it is in `chrome.storage.local`, keyed by lecture ID:

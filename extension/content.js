@@ -87,18 +87,45 @@
   }
 
   /** POST <BACKEND_URL>/ask */
-  function buildAskPayload({ lectureId, currentTime, question, context, language, frame }) {
+  function buildAskPayload({ lectureId, currentTime, question, context, language, frame, source, title }) {
     const payload = {
       lecture_id: lectureId,
       current_time: Math.round(currentTime * 10) / 10,
       question,
       context: context.map((c) => ({ start: c.start, end: c.end, text: c.text })),
+      // "typed" or "chip". Hot topics only counts typed questions (chips aren't topics).
+      source: source === "chip" ? "chip" : "typed",
+      title,
     };
     // Only when translated subtitles are on, e.g. "Spanish (Español)". The reply comes back in it.
     if (language) payload.language = language;
     // A JPEG of the video as the student sees it (base64, no data: prefix), so Nova can read slides.
     if (frame) payload.image = frame;
     return payload;
+  }
+
+  /** POST <BACKEND_URL>/topics. refresh: rebuild if new questions came in since the last build. */
+  function buildTopicsPayload({ lectureId, refresh }) {
+    return { lecture_id: lectureId, refresh: Boolean(refresh) };
+  }
+
+  /**
+   * Expected /topics response:
+   * { "status": "ok"|"empty", "total_questions": 12, "updated_at": <epoch s>,
+   *   "topics": [{ "title", "summary", "count", "time", "examples": ["..."] }] }
+   */
+  function readTopicsResponse(data) {
+    const topics = (data && Array.isArray(data.topics) ? data.topics : [])
+      .filter((t) => t && typeof t.title === "string" && Number(t.count) > 0)
+      .map((t) => ({
+        title: t.title,
+        summary: typeof t.summary === "string" ? t.summary : "",
+        count: Math.floor(Number(t.count)),
+        time: Number.isFinite(Number(t.time)) ? Number(t.time) : 0,
+        examples: Array.isArray(t.examples) ? t.examples.filter((e) => typeof e === "string").slice(0, 3) : [],
+      }));
+    const total = data && Number.isFinite(Number(data.total_questions)) ? Number(data.total_questions) : 0;
+    return { status: data && data.status === "empty" ? "empty" : "ok", topics, total, updatedAt: data && data.updated_at };
   }
 
   /** Expected /ask response: { "reply": "...", "chips": ["...", ...] }  (chips optional). */
@@ -193,7 +220,7 @@
       cssUrl: chrome.runtime.getURL("overlay.css"),
       mascotUrl: chrome.runtime.getURL("icons/nova.png"),
       windowSeconds: CAPTION_WINDOW_SECONDS,
-      onSend: (text) => ask(text),
+      onSend: (text, source) => ask(text, source),
       onDownload: downloadJson,
       onReloadCaptions: () => loadCaptions({ force: true }),
       onClearChat: clearChat,
@@ -208,6 +235,8 @@
       onOriginalAudio: setOriginalAudio,
       onRetryTranslation: () => subs.translator && subs.translator.retryFailed(),
       onLayoutChange: () => subs.ui && subs.ui.relayout(),
+      onOpenTopics: () => loadTopics(),
+      onRefreshTopics: () => loadTopics({ refresh: true }),
     });
 
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -231,6 +260,7 @@
     state.lectureId = lectureId;
     state.captions = [];
     stopTranslation();
+    if (overlay.isTopicsOpen()) loadTopics(); // the Hot topics view follows the lecture
     state.title = resolveTitle();
     log("Lecture detected", { id: lectureId, title: state.title, frame: window === window.top ? "top" : "iframe" });
     overlay.setLecture({ id: lectureId, title: state.title });
@@ -595,7 +625,7 @@
     }
   }
 
-  async function ask(question) {
+  async function ask(question, source = "input") {
     if (state.busy) return;
     const lectureId = state.lectureId;
     const currentTime = getCurrentTime();
@@ -603,7 +633,7 @@
     const lang = currentLanguage();
     const language = lang ? `${lang.english} (${lang.label})` : null;
     const frame = captureFrame();
-    const payload = buildAskPayload({ lectureId, currentTime, question, context, language, frame });
+    const payload = buildAskPayload({ lectureId, currentTime, question, context, language, frame, source, title: state.title });
 
     log(
       `/ask at ${formatTime(currentTime)} with ${context.length} caption lines` +
@@ -1032,6 +1062,28 @@
       playbackRate: v ? v.playbackRate : 1,
       playing: Boolean(v && !v.paused && !v.ended),
     });
+  }
+
+  // ===========================================================================
+  // Part 6: hot topics (what students ask about most in this lecture)
+  // ===========================================================================
+
+  let topicsToken = 0;
+
+  async function loadTopics({ refresh = false } = {}) {
+    const lectureId = state.lectureId;
+    const token = ++topicsToken;
+    overlay.setTopics({ state: "loading" });
+    const res = await sendToBackground({ type: "NOVA_TOPICS", payload: buildTopicsPayload({ lectureId, refresh }) });
+    if (token !== topicsToken || lectureId !== state.lectureId) return;
+    if (!res.ok) {
+      warn("/topics failed", res.error, res.status || "", res.detail || "");
+      overlay.setTopics({ state: "error", error: `The Nova server isn't reachable right now (${backendErrorText(res)}).` });
+      return;
+    }
+    const { status, topics, total, updatedAt } = readTopicsResponse(res.data);
+    log(`Hot topics: ${topics.length} themes from ${total} questions`);
+    overlay.setTopics(status === "empty" || !topics.length ? { state: "empty" } : { state: "ready", topics, total, updatedAt });
   }
 
   // ===========================================================================

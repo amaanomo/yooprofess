@@ -368,6 +368,243 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+/* ------------------------------------------------------------- hot topics --- */
+
+.topics-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px 0 8px;
+  border: 1px solid rgba(251, 146, 60, 0.35);
+  border-radius: 999px;
+  background: var(--space-700);
+  color: #fdba74;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.topics-btn:hover {
+  background: var(--space-600);
+}
+
+.topics-btn[aria-pressed="true"] {
+  background: rgba(251, 146, 60, 0.16);
+  border-color: rgba(251, 146, 60, 0.7);
+}
+
+.topics-flame {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.topics-btn:focus-visible,
+.topics-back:focus-visible,
+.topics-refresh:focus-visible,
+.topic-seek:focus-visible {
+  outline: 2px solid var(--comet);
+  outline-offset: 2px;
+}
+
+/* The view swaps in for the chat; header, strip and input stay. */
+.topics {
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.card[data-view="topics"] .topics {
+  display: flex;
+}
+
+.card[data-view="topics"] .messages,
+.card[data-view="topics"] .chips {
+  display: none !important;
+}
+
+.topics-head {
+  flex: none;
+  padding: 14px 20px 10px;
+  border-bottom: 1px solid var(--space-600);
+}
+
+.topics-back {
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--comet);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.topics-back:hover {
+  color: var(--star);
+}
+
+.topics-title {
+  margin: 8px 0 2px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--star);
+}
+
+.topics-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--star-muted);
+}
+
+.topics-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 20px;
+}
+
+.topic {
+  padding: 12px 14px;
+  border: 1px solid var(--space-600);
+  border-radius: 14px;
+  background: var(--space-800);
+}
+
+.topic-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topic-rank {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(251, 146, 60, 0.16);
+  color: #fdba74;
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+.topic-name {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--star);
+}
+
+.topic-count {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--star-muted);
+}
+
+.topic-heat {
+  height: 4px;
+  margin: 9px 0 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--space-600);
+}
+
+.topic-heat i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #f97316, #fbbf24);
+}
+
+.topic-summary {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--star-soft);
+}
+
+.topic-seek {
+  padding: 4px 10px;
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  border-radius: 999px;
+  background: var(--space-700);
+  color: var(--comet);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.topic-seek:hover {
+  background: var(--space-600);
+}
+
+.topic-examples {
+  margin: 10px 0 0;
+  padding: 0 0 0 16px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--star-muted);
+}
+
+.topic-examples li + li {
+  margin-top: 3px;
+}
+
+.topics-state {
+  margin: auto 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--star-muted);
+}
+
+.topics-state b {
+  font-size: 15px;
+  color: var(--star);
+}
+
+.topics-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  border-top: 1px solid var(--space-600);
+  font-size: 11.5px;
+  color: var(--star-muted);
+}
+
+.topics-refresh {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--space-600);
+  border-radius: 999px;
+  background: none;
+  color: var(--comet);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.topics-refresh:disabled {
+  opacity: 0.45;
+}
+
 /* ------------------------------------------- translated subtitles controls --- */
 
 .mini-planet {

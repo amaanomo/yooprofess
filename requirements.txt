@@ -2,3 +2,4 @@ google-genai
 anthropic
 elevenlabs>=2.77
 python-dotenv
+psycopg[binary]>=3.2

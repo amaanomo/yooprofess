@@ -9,6 +9,7 @@ the result so opening the view is usually instant.
 Storage is a SQLite file. On Railway, attach a Volume and set NOVA_DB_PATH (for
 example /data/nova.db); otherwise questions are lost on every redeploy.
 """
+import contextlib
 import json
 import os
 import sqlite3
@@ -18,6 +19,9 @@ import time
 
 LOCAL_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nova.db")
 DB_PATH = os.environ.get("NOVA_DB_PATH") or LOCAL_DB_PATH
+# A Postgres connection string (Tiger Data, Neon, Supabase, Railway Postgres...). When set, questions are
+# stored there and survive redeploys on hosts without a persistent disk. Unset = SQLite file as before.
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 MAX_QUESTIONS = 300  # newest questions considered per lecture
 MAX_THEMES = 6
 REBUILD_AFTER_NEW = 3  # rebuild themes once this many new questions came in...
@@ -62,21 +66,45 @@ def _usable_path(path):
     raise RuntimeError("no writable location for the Hot topics database")
 
 
-class QuestionStore:
-    """Anonymous question log + cached themes, in one SQLite file."""
+class _Conn:
+    """Queries are written once with '?' placeholders; this swaps in %s for Postgres."""
 
-    def __init__(self, path=DB_PATH):
-        self.path = _usable_path(path)
+    def __init__(self, conn, postgres):
+        self.conn, self.postgres = conn, postgres
+
+    def execute(self, sql, params=()):
+        return self.conn.execute(sql.replace("?", "%s") if self.postgres else sql, params)
+
+
+class QuestionStore:
+    """Anonymous question log + cached themes. Postgres when DATABASE_URL is set, else one SQLite file."""
+
+    def __init__(self, path=DB_PATH, dsn=None):
+        self.dsn = DATABASE_URL if dsn is None else dsn
         self.lock = threading.Lock()
+        if self.dsn:
+            try:
+                self._create_tables()
+                print("[topics] Hot topics questions are stored in Postgres (DATABASE_URL)", flush=True)
+                return
+            except Exception as e:  # missing driver, bad URL, database down: don't take the whole server down
+                print(f"[topics] can't use DATABASE_URL ({type(e).__name__}: {e}); falling back to SQLite, "
+                      "questions won't survive redeploys", flush=True)
+                self.dsn = ""
+        self.path = _usable_path(path)
+        self._create_tables()
+
+    def _create_tables(self):
+        key = "BIGSERIAL PRIMARY KEY" if self.dsn else "INTEGER PRIMARY KEY AUTOINCREMENT"
         with self._db() as db:
             db.execute(
-                """CREATE TABLE IF NOT EXISTS questions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                f"""CREATE TABLE IF NOT EXISTS questions (
+                    id {key},
                     lecture_id TEXT NOT NULL,
                     title TEXT,
                     question TEXT NOT NULL,
-                    video_time REAL,
-                    asked_at REAL NOT NULL)"""
+                    video_time DOUBLE PRECISION,
+                    asked_at DOUBLE PRECISION NOT NULL)"""
             )
             db.execute("CREATE INDEX IF NOT EXISTS questions_lecture ON questions (lecture_id, id)")
             db.execute(
@@ -84,13 +112,27 @@ class QuestionStore:
                     lecture_id TEXT PRIMARY KEY,
                     themes TEXT NOT NULL,
                     question_count INTEGER NOT NULL,
-                    built_at REAL NOT NULL)"""
+                    built_at DOUBLE PRECISION NOT NULL)"""
             )
 
+    @contextlib.contextmanager
     def _db(self):
-        db = sqlite3.connect(self.path, timeout=10)
-        db.row_factory = sqlite3.Row
-        return db
+        if self.dsn:
+            import psycopg  # pip install "psycopg[binary]"
+            from psycopg.rows import dict_row
+
+            conn = psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=10)
+        else:
+            conn = sqlite3.connect(self.path, timeout=10)
+            conn.row_factory = sqlite3.Row
+        try:
+            yield _Conn(conn, bool(self.dsn))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def add(self, lecture_id, title, question, video_time, now=None):
         with self.lock, self._db() as db:
@@ -101,7 +143,7 @@ class QuestionStore:
 
     def count(self, lecture_id):
         with self._db() as db:
-            return db.execute("SELECT COUNT(*) FROM questions WHERE lecture_id = ?", (lecture_id,)).fetchone()[0]
+            return db.execute("SELECT COUNT(*) AS n FROM questions WHERE lecture_id = ?", (lecture_id,)).fetchone()["n"]
 
     def questions(self, lecture_id, limit=MAX_QUESTIONS):
         with self._db() as db:
@@ -126,7 +168,7 @@ class QuestionStore:
             rows = db.execute(
                 "SELECT video_time FROM questions WHERE lecture_id = ? ORDER BY id DESC LIMIT ?", (lecture_id, limit)
             ).fetchall()
-        return sorted(round(float(r[0] or 0), 1) for r in rows)
+        return sorted(round(float(r["video_time"] or 0), 1) for r in rows)
 
     def cached(self, lecture_id):
         with self._db() as db:
@@ -138,7 +180,9 @@ class QuestionStore:
     def save_cache(self, lecture_id, themes, question_count, now=None):
         with self.lock, self._db() as db:
             db.execute(
-                "INSERT OR REPLACE INTO topics_cache (lecture_id, themes, question_count, built_at) VALUES (?, ?, ?, ?)",
+                """INSERT INTO topics_cache (lecture_id, themes, question_count, built_at) VALUES (?, ?, ?, ?)
+                   ON CONFLICT (lecture_id) DO UPDATE SET themes = excluded.themes,
+                       question_count = excluded.question_count, built_at = excluded.built_at""",
                 (lecture_id, json.dumps(themes), question_count, now or time.time()),
             )
 

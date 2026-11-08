@@ -462,7 +462,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === "NOVA_OPEN_DASHBOARD") {
-    openInstructorDashboard().then(sendResponse);
+    openInstructorDashboard(msg.lectureId).then(sendResponse);
     return true;
   }
 });
@@ -518,10 +518,14 @@ async function getInstructorKey() {
   return (await chrome.storage.local.get(INSTRUCTOR_KEY_STORAGE))[INSTRUCTOR_KEY_STORAGE] || "";
 }
 
-async function openInstructorDashboard() {
+async function openInstructorDashboard(lectureId) {
   const key = await getInstructorKey();
   // The key rides in the #fragment, which browsers never send to the server; the page removes it at once.
-  const url = cfg.BACKEND_URL.replace(/\/+$/, "") + "/instructor" + (key ? "#key=" + encodeURIComponent(key) : "");
+  // lecture= opens the dashboard on the lecture the instructor was watching.
+  const hash = new URLSearchParams();
+  if (key) hash.set("key", key);
+  if (lectureId) hash.set("lecture", lectureId);
+  const url = cfg.BACKEND_URL.replace(/\/+$/, "") + "/instructor" + (hash.toString() ? "#" + hash.toString() : "");
   await chrome.tabs.create({ url });
   return { ok: true };
 }

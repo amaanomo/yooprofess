@@ -275,7 +275,7 @@
       onOpenTopics: () => loadTopics(),
       onRefreshTopics: () => loadTopics({ refresh: true }),
       onInstructorUnlock: unlockInstructor,
-      onOpenDashboard: () => sendToBackground({ type: "NOVA_OPEN_DASHBOARD" }),
+      onOpenDashboard: openDashboard,
       onExitInstructor: exitInstructor,
       onToggleVoice: (on) => voice.setVoiceReplies(on),
       onMic: () => voice.listen(),
@@ -1599,7 +1599,13 @@
     overlay.setInstructorLogin({});
     overlay.setInstructor(true);
     log("Instructor view on");
-    overlay.showTopics(); // opens Hot topics right away
+    overlay.showChat();
+    openDashboard(); // straight to the dashboard for this lecture
+  }
+
+  /** Hot topics lives on the instructor dashboard (new tab), opened on this lecture. */
+  function openDashboard() {
+    return sendToBackground({ type: "NOVA_OPEN_DASHBOARD", lectureId: state.lectureId });
   }
 
   async function exitInstructor() {

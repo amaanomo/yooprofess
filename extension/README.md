@@ -154,7 +154,7 @@ The reply shows as a message with clickable chapters that seek the video. It's s
 
 1. Set `NOVA_INSTRUCTOR_KEY` on the backend (Railway → Variables). Pick a long random string and give it to the professor.
 2. The professor opens any lecture, then **⋯ → Instructor view…**, pastes the key, and presses **Unlock**. Nova checks it with the server and remembers it in that browser (`chrome.storage.local`, never synced).
-3. From then on, that browser shows the **Hot topics** button on every lecture, and the ⋯ menu has **Open instructor dashboard** (opens `/instructor` already unlocked: the key travels in the `#fragment`, which isn't sent to the server, and the page removes it from the address bar) and **Exit instructor view** (forgets the key).
+3. Unlocking opens the **instructor dashboard** (`/instructor`: every lecture, "Where students get stuck" timeline, themes, CSV export) on the lecture being watched. From then on, that browser shows a **Hot topics ↗** button on every lecture that opens the dashboard on that lecture, and the ⋯ menu has **Exit instructor view** (forgets the key). The key and lecture travel in the URL's `#fragment`, which isn't sent to the server, and the page removes it from the address bar.
 
 The server enforces it: `POST /topics` and the dashboard API need the `X-Instructor-Key` header (401 for a wrong or missing key, 403 if `NOVA_INSTRUCTOR_KEY` isn't set). A wrong key is never covered up by the demo data (`MOCK_TOPICS`). If the key is changed on the server, Nova drops the old one and asks for the new one. Everyone with the key sees every lecture's stats; per-course keys would be the next step for more professors.
 

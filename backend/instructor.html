@@ -63,10 +63,14 @@
   try { key = sessionStorage.getItem("nova:instructorKey") || ""; } catch (_) {}
   // Opened from Nova's "Open instructor dashboard": the key arrives in the #fragment (never sent to the
   // server). Keep it for this tab and remove it from the address bar right away.
-  const fromNova = new URLSearchParams(location.hash.slice(1)).get("key");
+  const novaHash = new URLSearchParams(location.hash.slice(1));
+  const fromNova = novaHash.get("key");
+  const wantLecture = novaHash.get("lecture") || ""; // the lecture the instructor was watching in Nova
   if (fromNova) {
     key = fromNova;
     try { sessionStorage.setItem("nova:instructorKey", key); } catch (_) {}
+  }
+  if (location.hash) {
     history.replaceState(null, "", location.pathname + location.search);
   }
 
@@ -84,7 +88,14 @@
       $("login").hidden = true; $("app").hidden = false;
       const sel = $("lectures");
       sel.replaceChildren(...lectures.map((l) => el("option", { value: l.lecture_id, textContent: `${l.title || l.lecture_id} (${l.questions})` })));
-      if (!lectures.length) return $("detail").replaceChildren(el("div", { className: "card muted", textContent: "No questions yet. Lectures appear here once students start asking Nova." }));
+      if (wantLecture) {
+        // Opened from Nova: show that lecture, even if nobody has asked about it yet.
+        if (!lectures.some((l) => l.lecture_id === wantLecture)) {
+          sel.prepend(el("option", { value: wantLecture, textContent: "This lecture (no questions yet)" }));
+        }
+        sel.value = wantLecture;
+      }
+      if (!sel.options.length) return $("detail").replaceChildren(el("div", { className: "card muted", textContent: "No questions yet. Lectures appear here once students start asking Nova." }));
       load();
     } catch (e) {
       $("login").hidden = false; $("app").hidden = true;
@@ -110,11 +121,14 @@
     try {
       current = await api("/instructor/api/lecture?lecture_id=" + encodeURIComponent(id));
       const max = Math.max(1, ...current.topics.map((t) => t.count));
+      if (!current.total_questions) {
+        return $("detail").replaceChildren(el("div", { className: "card muted", textContent: "No questions yet for this lecture. Topics appear here once students start asking Nova about it." }));
+      }
       $("detail").replaceChildren(
         el("div", { className: "card stats" },
           el("div", { className: "stat" }, el("b", { textContent: current.total_questions }), "questions"),
           el("div", { className: "stat" }, el("b", { textContent: current.topics.length }), "topics")),
-        current.question_times.length ? timeline(current.question_times, 0) : null,
+        ...((current.question_times || []).length ? [timeline(current.question_times, 0)] : []), // no stray "null" text
         ...current.topics.map((t, i) => {
           const heat = el("div", { className: "heat" }, el("i")); heat.firstChild.style.width = Math.max(8, Math.round(t.count / max * 100)) + "%";
           return el("div", { className: "card topic" },

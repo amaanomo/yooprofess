@@ -249,9 +249,7 @@
     const subtitlesItem = menuItem("captions", "Subtitles…", "subtitles");
     // Instructor view: Hot topics is instructor-only (unlocked with a key, remembered in this browser).
     const instructorItem = menuItem("list", "Instructor view…", "instructor");
-    const dashboardItem = menuItem("list", "Open instructor dashboard", "dashboard");
     const exitInstructorItem = menuItem("minimize", "Exit instructor view", "exit-instructor");
-    dashboardItem.hidden = true;
     exitInstructorItem.hidden = true;
     downloadItem.disabled = true;
     const menu = h(
@@ -268,7 +266,6 @@
       reloadItem,
       clearItem,
       instructorItem,
-      dashboardItem,
       exitInstructorItem
     );
     const menuBtn = h(
@@ -375,8 +372,9 @@
     // ---- Hot topics: strip pill + a view that swaps in for the chat ----------------
     const topicsBtn = h(
       "button",
-      { class: "topics-btn", type: "button", "aria-label": "Hot topics in this lecture", title: "What students ask about most" },
-      h("span", { text: "Hot topics" })
+      { class: "topics-btn", type: "button", "aria-label": "Hot topics: open the instructor dashboard for this lecture", title: "Opens the instructor dashboard (new tab)" },
+      h("span", { text: "Hot topics" }),
+      h("span", { class: "topics-ext", "aria-hidden": "true", text: "↗" })
     );
     topicsBtn.hidden = true; // instructor-only: shown by setInstructor(true)
     const contextStrip = h("div", { class: "context" }, topicsBtn, h("span", { class: "ctx-text" }), subBtn, pop);
@@ -671,7 +669,6 @@
       if (item.dataset.action === "chat") o.onSwitchChat(item.dataset.id);
       if (item.dataset.action === "subtitles") setPopOpen(true);
       if (item.dataset.action === "instructor") showInstructorLogin();
-      if (item.dataset.action === "dashboard") o.onOpenDashboard();
       if (item.dataset.action === "exit-instructor") o.onExitInstructor();
     });
     // Close the menu / subtitles popover on any click outside them (inside or outside the overlay).
@@ -916,13 +913,11 @@
       return item;
     }
 
+    // Hot topics opens the instructor dashboard (all lectures, timeline, CSV export) on this lecture.
     topicsBtn.addEventListener("click", () => {
       setMenuOpen(false);
       setPopOpen(false);
-      if (card.dataset.view === "topics") return setView("chat");
-      setView("topics");
-      topicsBack.focus({ preventScroll: true }); // keyboard focus moves into the view (Escape goes back)
-      o.onOpenTopics();
+      o.onOpenDashboard();
     });
     /** Count question times into equal slices of the lecture. Pure, so it's easy to reason about. */
     function bucketTimes(times, duration, maxBars = 24) {
@@ -1057,7 +1052,6 @@
       setInstructor(on) {
         topicsBtn.hidden = !on;
         instructorItem.hidden = Boolean(on);
-        dashboardItem.hidden = !on;
         exitInstructorItem.hidden = !on;
         if (!on && card.dataset.view === "topics") setView("chat");
       },

@@ -1,4 +1,4 @@
-export default function Whiteboard({ svgLayerRef, captionText, statusText }) {
+export default function Whiteboard({ svgLayerRef, captionText, statusText, codeView, overlay }) {
   return (
     <section
       id="board-wrap"
@@ -16,6 +16,7 @@ export default function Whiteboard({ svgLayerRef, captionText, statusText }) {
         zIndex: 10,
       }}
     >
+      {codeView || (
       <svg
         id="board"
         viewBox="0 0 100 62"
@@ -30,6 +31,8 @@ export default function Whiteboard({ svgLayerRef, captionText, statusText }) {
         </defs>
         <g id="layer" ref={svgLayerRef} filter="url(#rough)"></g>
       </svg>
+      )}
+      {overlay}
 
       {/* Caption bubble */}
       <div

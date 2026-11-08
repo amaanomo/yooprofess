@@ -724,12 +724,149 @@ def generate_plan_text(system, prompt):
     return "".join(b.text for b in msg.content if b.type == "text")
 
 
+# ---------------------------------------------------------- Deep Dive: code walkthrough ---
+# When the question, Nova's answer or the video frame contains code, the whiteboard asks the student
+# whether to walk through the code line by line or to draw a diagram.
+
+CODE_MAX_LINES = 25
+
+# Cheap check before spending a model call on text-only requests.
+_CODE_HINT = re.compile(
+    r"```|^\s*(def |class |import |from \w+ import|for .+:|while .+:|if .+:|return\b|print\(|#include|public |"
+    r"function |const |let |var |SELECT |CREATE )|[;{}]\s*$|\w+\s*=\s*[\w\[\(\"']",
+    re.MULTILINE,
+)
+
+FIND_CODE_SYSTEM = """You find source code that a student's question is about, so a tutor can walk through it line by line.
+You get the student's question, the tutor's short answer, and possibly an image of the lecture video at that moment.
+Reply with JSON only, no prose and no code fence:
+{"found": true|false, "language": "python"|"javascript"|"java"|"c"|"sql"|..., "source": "question"|"answer"|"screen", "code": "..."}
+
+Rules:
+- Use code from the question first, then the answer, then the image.
+- Copy the code EXACTLY as written, keeping indentation and line breaks. Transcribe code visible in the image carefully.
+- Only return code that is actually written out in the question, the answer or the image. NEVER write or rebuild
+  code from a description (e.g. the answer saying "this calls .json() on the response" is not code).
+- Use the image only if the code in it is clearly readable. If it is too small, blurry or far away (for example a
+  projector screen in a classroom photo), do not guess: reply {"found": false}.
+- Return only the part the question is about, at most 25 lines. Drop unrelated cells or output.
+- Shell commands, error messages or a single word are not code to walk through: then "found": false.
+- If there is no real code, reply {"found": false}."""
+
+
+def _looks_like_code(text):
+    return len(_CODE_HINT.findall(text or "")) >= 2
+
+
+def find_code(body):
+    """POST /explain/code -> {"found": bool, "code_language", "source", "code"} (code is at most CODE_MAX_LINES lines)."""
+    question = str(body.get("question") or "")[:2000]
+    reply = str(body.get("reply") or "").replace("*", "")[:3000]
+    image = body.get("image") or None
+    if not image and not (_looks_like_code(question) or _looks_like_code(reply)):
+        return {"found": False}
+    user = f"Student's question: {question}\n\nTutor's answer: {reply}"
+    data = parse_json_loose(complete(FIND_CODE_SYSTEM, user, max_tokens=1500, json_output=True, image_b64=image)) or {}
+    code = str(data.get("code") or "").replace("\r\n", "\n").strip("\n")
+    lines = [ln.rstrip() for ln in code.split("\n")]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not data.get("found") or len([ln for ln in lines if ln.strip()]) < 2:
+        return {"found": False}
+    source = data.get("source") if data.get("source") in ("question", "answer", "screen") else ("screen" if image else "answer")
+    return {
+        "found": True,
+        "code_language": str(data.get("language") or "code")[:20].lower(),
+        "source": source,
+        "code": "\n".join(lines[:CODE_MAX_LINES]),
+    }
+
+
+CODE_SYSTEM = """You are Professor Nova, walking a student through a piece of code line by line, like a patient TA.
+You get the code with line numbers. Reply with ONLY a JSON object, no prose and no code fences:
+{"title": str, "steps": [{"head": str, "say": str, "lines": [first, last], "note": str}]}
+
+How to teach:
+- Go through the code in order, top to bottom. 4 to 8 steps.
+- Each step covers one line or a small group of related lines (usually 1-4). "lines" is the 1-based, inclusive range
+  from the numbered code, e.g. [4, 6].
+- "head" is 2-4 words, e.g. "Start the server".
+- "note" is the card shown next to the highlighted lines: 1-2 short sentences in plain words saying what those lines do
+  and why. Define any jargon the first time (e.g. "a process is a running program").
+- "say" is what you say aloud: 1-3 short sentences, friendly, can add a tip, an analogy or a common mistake.
+- The last step recaps what the whole snippet does, with "lines": [1, N] where N is the last line.
+- Use the lecture transcript for context and connect to what the professor said when it helps.
+- Never change the code; explain it as written."""
+
+
+def clean_code_plan(raw, code, max_steps=8):
+    """Validate a code walkthrough. Line ranges are clamped to the code. Returns a plan dict or None."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("steps"), list):
+        return None
+    n = max(1, len(code.split("\n")))
+    steps = []
+    for st in raw["steps"][:max_steps]:
+        if not isinstance(st, dict) or not str(st.get("say", "")).strip():
+            continue
+        lines = st.get("lines")
+        if not (isinstance(lines, list) and len(lines) == 2 and all(isinstance(x, (int, float)) for x in lines)):
+            continue
+        first, last = sorted(min(n, max(1, int(x))) for x in lines)
+        say = str(st["say"]).strip()[:300]
+        note = str(st.get("note") or "").strip()[:300] or say
+        head = str(st.get("head", "")).strip()[:40] or note[:28].rstrip()
+        steps.append({"head": head, "say": say, "note": note, "lines": [first, last], "clear": False, "draw": []})
+    if not steps:
+        return None
+    return {"title": str(raw.get("title", ""))[:80]}, steps
+
+
+def explain_code(body, lec, transcript, followup, language):
+    code = str(body.get("code") or "")[:6000]
+    numbered = "\n".join(f"{i:>3}| {ln}" for i, ln in enumerate(code.split("\n")[:CODE_MAX_LINES], 1))
+    prompt = (
+        f"Lecture: {lec['title'] if lec else '(unknown)'}\n\nTranscript:\n{transcript}\n\n"
+        f"The student asked: {body.get('question', '')}\n"
+        f"Nova's short answer was: {body.get('reply', '')}\n\n"
+        f"The code ({body.get('code_language') or 'code'}), with line numbers:\n{numbered}\n\n"
+    )
+    system = CODE_SYSTEM + LEVEL_HINTS.get(body.get("level"), "")
+    max_steps = 8
+    if followup:
+        lesson = body.get("lesson") or []
+        done = "\n".join(f"{i}. {str(s.get('head', ''))}: {str(s.get('say', ''))}" for i, s in enumerate(lesson[:12], 1) if isinstance(s, dict))
+        prompt += (
+            f"Walkthrough so far:\n{done}\n\nThe student's follow-up question: {followup}\n\n"
+            "Answer it with 2 to 4 NEW steps in the same JSON format, pointing at the relevant lines. No recap step."
+        )
+        max_steps = 4
+    else:
+        prompt += "Walk the student through this code."
+    if language:
+        system += (
+            f"\n\nTeach in {language}: the title and every step's head, say and note. "
+            "Keep the code and the JSON keys exactly as they are."
+        )
+    for _ in range(2):  # one retry if the model returns bad JSON
+        cleaned = clean_code_plan(parse_json_loose(generate_plan_text(system, prompt)), code, max_steps)
+        if cleaned:
+            meta, steps = cleaned
+            return {**meta, "mode": "code", "code": code, "code_language": body.get("code_language") or "code",
+                    "source": body.get("source") or "", "steps": steps}
+    return {"title": "Code walkthrough", "mode": "code", "code": code, "code_language": body.get("code_language") or "code",
+            "source": body.get("source") or "",
+            "steps": [{"head": "Explanation", "say": str(body.get("reply", ""))[:300] or "Sorry, I couldn't explain this one.",
+                       "note": "", "lines": [1, len(code.split("\n"))], "clear": False, "draw": []}]}
+
+
 def explain(body):
     # Chat replies carry markdown (**bold**, ***terms***); the whiteboard wants plain text.
     body = {**body, "reply": str(body.get("reply") or "").replace("*", "")}
     lec = LECTURES.get(body.get("lecture_id"))
     transcript = transcript_text(lec["captions"]) if lec else "(not available)"
     followup = str(body.get("followup") or "").strip()[:500]
+    if body.get("mode") == "code" and str(body.get("code") or "").strip():
+        return explain_code(body, lec, transcript, followup, str(body.get("language") or "").strip()[:60])
     prompt = (
         f"Lecture: {lec['title'] if lec else '(unknown)'}\n\nTranscript:\n{transcript}\n\n"
         f"The student asked: {body.get('question', '')}\n"
@@ -1010,6 +1147,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, translate(body))
             if self.path == "/summary":
                 return self._send(200, summarize(body))
+            if self.path == "/explain/code":
+                return self._send(200, find_code(body))
             if self.path == "/explain":
                 return self._send(200, explain(body))
             if self.path == "/topics":

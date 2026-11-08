@@ -99,6 +99,11 @@ def chat_client():
     return _chat_client
 
 
+def supports_effort(model):
+    """Claude's `effort` setting isn't accepted by every model (Haiku 4.5 returns a 400 for it)."""
+    return "haiku" not in (model or "").lower()
+
+
 def complete(system, user, max_tokens, json_output=False, image_b64=None, history=None, temperature=None, effort=None):
     """One model call, same shape for both providers. Returns the reply text ("" if none).
     history: earlier turns as [("user"|"assistant", text), ...], oldest first.
@@ -134,14 +139,24 @@ def complete(system, user, max_tokens, json_output=False, image_b64=None, histor
             {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64}},
             {"type": "text", "text": user},
         ]
-    extra = {"output_config": {"effort": effort}} if effort else {}
-    msg = chat_client().messages.create(
+    import anthropic
+
+    request = dict(
         model=ANTHROPIC_MODEL,
         max_tokens=max_tokens,
         system=[{"type": "text", "text": system}],
         messages=[{"role": r, "content": t} for r, t in history] + [{"role": "user", "content": content}],
-        **extra,
     )
+    if effort and supports_effort(ANTHROPIC_MODEL):
+        request["output_config"] = {"effort": effort}
+    try:
+        msg = chat_client().messages.create(**request)
+    except anthropic.BadRequestError as err:
+        # A model we didn't know rejects "effort": retry once without it rather than failing the answer.
+        if "output_config" not in request or "effort" not in str(err).lower():
+            raise
+        del request["output_config"]
+        msg = chat_client().messages.create(**request)
     return "".join(b.text for b in msg.content if b.type == "text").strip()
 
 

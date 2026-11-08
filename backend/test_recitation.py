@@ -83,6 +83,59 @@ class Email(unittest.TestCase):
             r.smtp_config({**ENV, "NOVA_RECITATION_EMAIL": "not-an-email"})
 
 
+class FakeResponse:
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def read(self): return b"{}"
+
+
+class Brevo(unittest.TestCase):
+    ENV = {"NOVA_BREVO_API_KEY": "k-123", "NOVA_EMAIL_FROM": "me@gmail.com", "NOVA_RECITATION_EMAIL": "ta1@buffalo.edu, ta2@buffalo.edu"}
+
+    def test_posts_to_brevo_with_only_configured_recipients(self):
+        seen = {}
+
+        def opener(req, timeout=0):
+            seen["req"], seen["timeout"] = req, timeout
+            return FakeResponse()
+
+        masked = r.send_brevo("Subj\r\nBcc: evil@x.com", "text", "<p>h</p>", env=self.ENV, opener=opener)
+        req = seen["req"]
+        body = json.loads(req.data)
+        self.assertEqual(req.full_url, "https://api.brevo.com/v3/smtp/email")
+        self.assertEqual(req.get_header("Api-key"), "k-123")
+        self.assertEqual(body["to"], [{"email": "ta1@buffalo.edu"}, {"email": "ta2@buffalo.edu"}])
+        self.assertEqual(body["sender"]["email"], "me@gmail.com")
+        self.assertNotIn("\n", body["subject"])
+        self.assertEqual(masked, ["t***@buffalo.edu", "t***@buffalo.edu"])
+
+    def test_brevo_is_chosen_when_the_key_is_set_and_smtp_otherwise(self):
+        import unittest.mock as m
+        with m.patch.object(r, "send_brevo", return_value=["b"]) as b:
+            self.assertEqual(r.send_email("s", "t", "h", env=self.ENV), ["b"])
+            b.assert_called_once()
+        FakeSMTP.sent = []
+        r.send_email("s", "t", "h", env=ENV, smtp=FakeSMTP)  # no Brevo key: SMTP
+        self.assertEqual(len(FakeSMTP.sent), 1)
+
+    def test_brevo_missing_sender(self):
+        with self.assertRaises(r.EmailNotConfigured) as cm:
+            r.send_brevo("s", "t", "h", env={"NOVA_BREVO_API_KEY": "k", "NOVA_RECITATION_EMAIL": "ta@buffalo.edu"})
+        self.assertIn("NOVA_EMAIL_FROM", str(cm.exception))
+
+    def test_brevo_http_error_becomes_a_502_not_a_crash(self):
+        import io
+        import urllib.error
+
+        def opener(req, timeout=0):
+            raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, io.BytesIO(b'{"message":"Key not found"}'))
+
+        def send(*a): return r.send_brevo(*a, env=self.ENV, opener=opener)
+        code, out = r.export_plan("L1", "t", DATA, lambda *a, **k: json.dumps(blocks(50)), {"plans": {}, "sent": {}}, send=send, now=1)
+        self.assertEqual((code, out["sent"]), (502, False))
+        self.assertNotIn("k-123", json.dumps(out))
+
+
 class Export(unittest.TestCase):
     def setUp(self):
         self.state = {"plans": {}, "sent": {}}

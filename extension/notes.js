@@ -84,17 +84,20 @@
 
   // ---- Text helpers -----------------------------------------------------------
 
-  /** Nova's replies use "\n" between lines and "•" bullets. Returns blocks: { list: boolean, lines: string[] }. */
+  /** Nova's replies use "\n" between lines, "-"/"•" bullets and "1." lists. Returns blocks: { list, ordered, lines }. */
   function blocks(text) {
     const out = [];
     for (const raw of String(text).split("\n")) {
       const line = raw.trim();
       if (!line) continue;
       const bullet = /^[•\-*]\s+(.*)$/.exec(line);
+      const num = bullet ? null : /^\d+[.)]\s+(.*)$/.exec(line);
+      const item = bullet || num;
+      const ordered = !!num;
       const last = out[out.length - 1];
-      if (bullet) {
-        if (last && last.list) last.lines.push(bullet[1]);
-        else out.push({ list: true, lines: [bullet[1]] });
+      if (item) {
+        if (last && last.list && last.ordered === ordered) last.lines.push(item[1]);
+        else out.push({ list: true, ordered, lines: [item[1]] });
       } else {
         out.push({ list: false, lines: [line] });
       }
@@ -129,7 +132,7 @@
       out.push("## Questions and answers", "");
       for (const q of data.qa) {
         out.push(`### ${q.n}. ${q.question}${q.time != null ? ` (at ${fmt(q.time)})` : ""}`, "");
-        for (const b of blocks(q.answer)) out.push(b.list ? b.lines.map((l) => `- ${l}`).join("\n") : b.lines[0], "");
+        for (const b of blocks(q.answer)) out.push(b.list ? b.lines.map((l, i) => (b.ordered ? `${i + 1}. ${l}` : `- ${l}`)).join("\n") : b.lines[0], "");
         if (q.watch) {
           const end = q.watch.end && q.watch.end !== q.watch.start ? ` to ${fmt(q.watch.end)}` : "";
           out.push(`> Watch again: ${fmt(q.watch.start)}${end}${q.watch.label ? `, ${oneLine(q.watch.label)}` : ""}`, "");
@@ -150,9 +153,10 @@
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
 
-  /** Escapes first, then turns Nova's ***bold italic***, **bold** and *italic* into tags. */
+  /** Escapes first, then turns Nova's `code`, ***bold italic***, **bold** and *italic* into tags. */
   function inline(text) {
     return esc(text)
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
       .replace(/\*\*\*([^*]+)\*\*\*/g, "<strong><em>$1</em></strong>")
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/\*([^*]+)\*/g, "<em>$1</em>");
@@ -160,7 +164,11 @@
 
   function htmlBlocks(text) {
     return blocks(text)
-      .map((b) => (b.list ? `<ul>${b.lines.map((l) => `<li>${inline(l)}</li>`).join("")}</ul>` : `<p>${inline(b.lines[0])}</p>`))
+      .map((b) => {
+        if (!b.list) return `<p>${inline(b.lines[0])}</p>`;
+        const tag = b.ordered ? "ol" : "ul";
+        return `<${tag}>${b.lines.map((l) => `<li>${inline(l)}</li>`).join("")}</${tag}>`;
+      })
       .join("\n");
   }
 
@@ -174,7 +182,8 @@ h2 { margin: 36px 0 10px; padding-bottom: 6px; font-size: 20px; border-bottom: 2
 h3 { margin: 0 0 8px; font-size: 16px; }
 .meta { margin: 0 0 8px; color: var(--muted); font-size: 14px; }
 .meta a { color: var(--accent); }
-ul { margin: 6px 0 12px; padding-left: 22px; }
+ul, ol { margin: 6px 0 12px; padding-left: 22px; }
+code { padding: 1px 5px; border-radius: 4px; background: #f0eef6; font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace; }
 .chapters { list-style: none; padding: 0; }
 .chapters li { padding: 4px 0; }
 .t { display: inline-block; min-width: 54px; color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }

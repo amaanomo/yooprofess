@@ -185,8 +185,11 @@
       sync: syncOverlay,
 
       speak(text) {
-        // Replies use **bold** / ***terms*** markdown; don't let the voice read the asterisks.
-        const spoken = String(text || "").replace(/\*+/g, "").trim();
+        // Replies use **bold**, `code` and list markdown; don't let the voice read the markup.
+        const spoken = String(text || "")
+          .replace(/[*`]+/g, "")
+          .replace(/^\s*(?:[-•]|\d+[.)])\s+/gm, "")
+          .trim();
         if (!settings.voiceReplies || !spoken) return;
         send({ type: "NOVA_SPEAK", text: spoken }); // background picks the engine + voice
       },

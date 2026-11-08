@@ -81,9 +81,11 @@ def chat_client():
     return _chat_client
 
 
-def complete(system, user, max_tokens, json_output=False, image_b64=None, history=None):
+def complete(system, user, max_tokens, json_output=False, image_b64=None, history=None, temperature=None, effort=None):
     """One model call, same shape for both providers. Returns the reply text ("" if none).
-    history: earlier turns as [("user"|"assistant", text), ...], oldest first."""
+    history: earlier turns as [("user"|"assistant", text), ...], oldest first.
+    temperature applies to Gemini only (current Claude models reject sampling params);
+    effort ("low"|"medium"|"high") applies to Claude only."""
     history = history or []
     if PROVIDER == "gemini":
         from google.genai import types
@@ -92,6 +94,7 @@ def complete(system, user, max_tokens, json_output=False, image_b64=None, histor
             system_instruction=system,
             max_output_tokens=max_tokens,
             response_mime_type="application/json" if json_output else None,
+            temperature=temperature,
         )
         contents = user
         if image_b64:
@@ -113,11 +116,13 @@ def complete(system, user, max_tokens, json_output=False, image_b64=None, histor
             {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64}},
             {"type": "text", "text": user},
         ]
+    extra = {"output_config": {"effort": effort}} if effort else {}
     msg = chat_client().messages.create(
         model=ANTHROPIC_MODEL,
         max_tokens=max_tokens,
         system=[{"type": "text", "text": system}],
         messages=[{"role": r, "content": t} for r, t in history] + [{"role": "user", "content": content}],
+        **extra,
     )
     return "".join(b.text for b in msg.content if b.type == "text").strip()
 
@@ -131,21 +136,26 @@ LANGUAGE_NAMES = {
     "fr": "French", "pt": "Portuguese (Brazil)", "vi": "Vietnamese", "ja": "Japanese",
 }
 
-SYSTEM = """You are Nova, an expert tutor following along with a recorded lecture. Answer like a professor who knows the field thoroughly.
+SYSTEM = """You are Nova, an expert tutor following along with a recorded lecture with a student. Answer like a professor who knows the field thoroughly, and get straight to the point.
 
-Format rules:
-- Use **In this lecture:** and **More broadly:** as bold section labels
-- Bold and italicize key terms like ***chain of thought*** or ***few-shot prompting***
-- Keep each section to 1-2 sentences. Be concise and direct.
+How to write every answer:
+- Start with the answer itself in one plain sentence. Never open with filler like "In this lecture", "The professor says", "Great question" or a restatement of the question.
+- Ground the answer in the transcript when it covers the topic, but weave that in naturally (e.g. "The loss used here is MSE, so ...") instead of labeling sections.
+- Scale the length to the question: a simple factual question gets 1-2 sentences; an explanation gets the one-line answer plus 2-4 short bullets (about 120 words at most). Never pad.
+- Formatting you may use: "- " bullets, "1." numbered lists, **bold** for at most 1-3 key terms, and `inline code` for code, symbols or identifiers. No headings, tables, code blocks or section labels.
 - Never use em dashes (—). Use commas, periods, or colons instead.
 
-Structure every answer as:
-**In this lecture:** [what the professor covered, grounded in the transcript]
-**More broadly:** [deeper knowledge, context, or examples beyond the lecture]
+Match the shape to what the student asked for:
+- Explain (e.g. "explain what was just said", "what does X mean"): the one-line answer, then 2-4 bullets covering the key parts or steps.
+- "What was just said" / "that" / "this" with no other referent means the part of the transcript in roughly the 2 minutes before the paused timestamp. Focus there.
+- Example: give one fresh, concrete example with real numbers or names, in 2-4 sentences or a short numbered walkthrough. If the professor gave their own example, mention it in one sentence and add a Watch line for it.
+- Quiz me: ask exactly ONE question about the recent material, either multiple choice (options on separate lines as "A) ...", "B) ...", "C) ...", "D) ...") or a short-answer question. Do NOT give the answer or hints, and add no Watch line.
+- When the student answers a quiz question from the earlier conversation: start with "Correct." or "Not quite." then explain why in 1-2 sentences (give the right answer if they missed it), then ask "Want another one?"
+- Any other question: answer directly at the length it needs.
 
-End with a line starting "Watch:" as a time range in M:SS (or H:MM:SS) from the transcript, plus a short description, e.g. "Watch: 12:33-14:08, where the professor explains CoT."
+Watch line: only when a specific stretch of the transcript directly covers the answer, end with a line starting "Watch:" as a time range in M:SS (or H:MM:SS) from the transcript, plus a short description, e.g. "Watch: 12:33-14:08, derivation of the update rule". Skip it for quiz turns and for answers that come from general knowledge.
 If the student asks WHERE or WHEN something was covered (e.g. "where did he talk about recursion?"), search the whole transcript and instead give a one-sentence answer followed by up to 3 "Watch:" lines, one per line, most relevant first, each with a short description (e.g. "full explanation", "brief mention", "worked example").
-If the transcript does not cover the question, skip "In this lecture:" and answer from your full knowledge, omitting the Watch line.
+If the transcript does not cover the question, answer from your full knowledge and omit the Watch line.
 Never invent timestamps that are not in the transcript.
 Use the earlier conversation to resolve follow-ups like "explain that again" or "give another example".
 
@@ -157,9 +167,11 @@ For a topic jump, seek_to the start of the best match from the transcript timest
 
 VOICE_ADDENDUM = """
 
-The student asked out loud and your answer will be read aloud by a text-to-speech voice. Keep it to 2-4 short, conversational sentences and skip the bold section labels. No lists, and don't spell out symbols or code; say formulas in words. (Any "Watch:" or "Command:" lines are handled by the app, not read aloud, so still include them when relevant.)"""
+The student asked out loud and your answer will be read aloud by a text-to-speech voice. Use 1-3 short, conversational sentences, with the direct answer first. No markdown, bullets, numbered lists or bold. Don't spell out symbols or code; say formulas in words. For a quiz question, say the question and its options in one flowing sentence (e.g. "Is it A, ..., B, ..., or C, ...?"). (Any "Watch:" or "Command:" lines are handled by the app, not read aloud, so still include them when relevant.)"""
 
 HISTORY_TURNS = 10  # earlier chat turns used for follow-ups
+ASK_TEMPERATURE = 0.3  # Gemini: low for consistent, on-format tutor answers
+ASK_EFFORT = "low"  # Claude: sampling params are gone; low effort suits quick chat answers
 
 
 def history_turns(history):
@@ -247,7 +259,9 @@ def ask(body):
         f"Lecture: {title}\n\nTranscript:\n{transcript}\n\n"
         f"The student is paused at {now}.\nQuestion: {body.get('question', '')}"
     )
-    return complete(system, user, max_tokens=2048, image_b64=image, history=history_turns(body.get("history")))
+    return complete(
+        system, user, max_tokens=2048, image_b64=image, history=history_turns(body.get("history")), temperature=ASK_TEMPERATURE, effort=ASK_EFFORT
+    )
 
 
 def _parse_translations(text):
@@ -657,8 +671,15 @@ def list_voices():
     return data
 
 
+def speakable(text):
+    """Strip chat markdown (asterisks, backticks, list markers) so the voice doesn't read it."""
+    text = str(text or "").replace("*", "").replace("`", "")
+    text = re.sub(r"^\s*(?:[-•]|\d+[.)])\s+", "", text, flags=re.M)
+    return text.strip()
+
+
 def tts(text, voice_id):
-    text = str(text or "").replace("*", "").strip()[:2500]
+    text = speakable(text)[:2500]
     if not text:
         raise VoiceError(400, "text is empty")
     path = f"/v1/text-to-speech/{urllib.parse.quote(voice_id or ELEVEN_DEFAULT_VOICE)}?output_format=mp3_44100_128"

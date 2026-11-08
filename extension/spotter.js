@@ -134,7 +134,7 @@
       rec.lang = h.lang || navigator.language || "en-US";
       try {
         // Contextual biasing (newer Chrome); silently skipped elsewhere.
-        if ("phrases" in rec && root.SpeechRecognitionPhrase) {
+        if (!s.noPhrases && "phrases" in rec && root.SpeechRecognitionPhrase) {
           rec.phrases = HINT_PHRASES.map((p) => new root.SpeechRecognitionPhrase(p, 5));
         }
       } catch (_) {
@@ -151,6 +151,12 @@
       rec.onerror = (event) => {
         const err = event.error;
         if (err === "no-speech" || err === "aborted") return; // normal; onend restarts
+        if (err === "phrases-not-supported") {
+          // Chrome exposes rec.phrases but this recognizer rejects it: restart without hints.
+          if (!s.noPhrases) console.info("[Nova] speech hints not supported here; listening without them");
+          s.noPhrases = true;
+          return; // onend restarts
+        }
         console.warn("[Nova] speech recognition error:", err, event.message || "");
         if (err === "not-allowed" || err === "service-not-allowed" || err === "audio-capture" || err === "language-not-supported") {
           s.fatal = err; // don't hammer Chrome with retries; the student has to fix it

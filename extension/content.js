@@ -28,6 +28,10 @@
   const CAPTION_URL = "{origin}/Panopto/Pages/Transcription/GenerateSRT.ashx?id={id}&language=0";
 
   /** How much recent transcript goes with each question. */
+  // Each question also sends one frame of the video so Nova can see the slide. Set false to send text only.
+  const SEND_FRAME = true;
+  const FRAME_MAX_WIDTH = 1024;
+  const FRAME_QUALITY = 0.7;
   const CAPTION_WINDOW_SECONDS = 90;
 
   /** Static suggestion chips. Replaced by `chips` from /ask when the backend sends them. */
@@ -82,7 +86,7 @@
   }
 
   /** POST <BACKEND_URL>/ask */
-  function buildAskPayload({ lectureId, currentTime, question, context, language }) {
+  function buildAskPayload({ lectureId, currentTime, question, context, language, frame }) {
     const payload = {
       lecture_id: lectureId,
       current_time: Math.round(currentTime * 10) / 10,
@@ -91,6 +95,8 @@
     };
     // Only when translated subtitles are on, e.g. "Spanish (Español)". The reply comes back in it.
     if (language) payload.language = language;
+    // A JPEG of the video as the student sees it (base64, no data: prefix), so Nova can read slides.
+    if (frame) payload.image = frame;
     return payload;
   }
 
@@ -564,6 +570,26 @@
     return { clean, watch: { start, end: Number.isFinite(end) ? end : start, label: timeMatch[3] ? timeMatch[3].trim() : "" } };
   }
 
+  /**
+   * The current video frame as a base64 JPEG (max FRAME_MAX_WIDTH wide), or null when the browser
+   * won't let us read it (cross-origin or DRM video taints the canvas) or nothing is playing yet.
+   */
+  function captureFrame() {
+    const v = state.video;
+    if (!SEND_FRAME || !v || !v.videoWidth || !v.videoHeight || v.readyState < 2) return null;
+    try {
+      const scale = Math.min(1, FRAME_MAX_WIDTH / v.videoWidth);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(v.videoWidth * scale);
+      canvas.height = Math.round(v.videoHeight * scale);
+      canvas.getContext("2d").drawImage(v, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL("image/jpeg", FRAME_QUALITY).split(",")[1] || null;
+    } catch (err) {
+      warn("Couldn't capture the video frame, asking with text only", err && err.name);
+      return null;
+    }
+  }
+
   async function ask(question) {
     if (state.busy) return;
     const lectureId = state.lectureId;
@@ -571,13 +597,14 @@
     const context = getCaptionWindow(currentTime);
     const lang = currentLanguage();
     const language = lang ? `${lang.english} (${lang.label})` : null;
-    const payload = buildAskPayload({ lectureId, currentTime, question, context, language });
+    const frame = captureFrame();
+    const payload = buildAskPayload({ lectureId, currentTime, question, context, language, frame });
 
     log(
       `/ask at ${formatTime(currentTime)} with ${context.length} caption lines` +
         (context.length ? ` (${formatTime(context[0].start)}–${formatTime(context[context.length - 1].end)})` : "")
     );
-    log("/ask payload", payload);
+    log("/ask payload", frame ? { ...payload, image: `<${Math.round(frame.length / 1024)} KB jpeg>` } : payload);
 
     saveMessage({ role: "student", text: question, time: payload.current_time, at: Date.now() });
     overlay.addMessage({ role: "student", text: question });

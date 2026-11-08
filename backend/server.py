@@ -15,6 +15,7 @@ Endpoints (see the "Backend contract" in extension/content.js):
   POST /ask        answer the question, then say which part of the lecture to watch
   POST /translate  translate a batch of caption cues for the subtitle overlay
 """
+import base64
 import json
 import os
 import re
@@ -67,7 +68,7 @@ def chat_client():
     return _chat_client
 
 
-def complete(system, user, max_tokens, json_output=False):
+def complete(system, user, max_tokens, json_output=False, image_b64=None):
     """One model call, same shape for both providers. Returns the reply text ("" if none)."""
     if PROVIDER == "gemini":
         from google.genai import types
@@ -77,13 +78,22 @@ def complete(system, user, max_tokens, json_output=False):
             max_output_tokens=max_tokens,
             response_mime_type="application/json" if json_output else None,
         )
-        resp = chat_client().models.generate_content(model=CHAT_GEMINI_MODEL, contents=user, config=config)
+        contents = user
+        if image_b64:
+            contents = [types.Part.from_bytes(data=base64.b64decode(image_b64), mime_type="image/jpeg"), user]
+        resp = chat_client().models.generate_content(model=CHAT_GEMINI_MODEL, contents=contents, config=config)
         return (resp.text or "").strip()
+    content = user
+    if image_b64:
+        content = [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64}},
+            {"type": "text", "text": user},
+        ]
     msg = chat_client().messages.create(
         model=ANTHROPIC_MODEL,
         max_tokens=max_tokens,
         system=[{"type": "text", "text": system}],
-        messages=[{"role": "user", "content": user}],
+        messages=[{"role": "user", "content": content}],
     )
     return "".join(b.text for b in msg.content if b.type == "text").strip()
 
@@ -167,11 +177,18 @@ def ask(body):
             '"Watch: M:SS-M:SS, <description>" with the word "Watch:" in English; '
             "the description may be in the reply language."
         )
+    image = body.get("image") or None
+    if image:
+        system += (
+            "\n\nAn image of the video at the moment the student paused is attached. "
+            "If the question is about what is on screen (a slide, diagram, code, or whiteboard), "
+            "answer from the image and quote its text. Otherwise rely on the transcript."
+        )
     user = (
         f"Lecture: {title}\n\nTranscript:\n{transcript}\n\n"
         f"The student is paused at {now}.\nQuestion: {body.get('question', '')}"
     )
-    return complete(system, user, max_tokens=2048)
+    return complete(system, user, max_tokens=2048, image_b64=image)
 
 
 def _parse_translations(text):

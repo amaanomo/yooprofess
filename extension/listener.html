@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nova is listening</title>
+    <link rel="icon" href="icons/icon32.png" />
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <!--
+      Fallback for when Chrome won't run speech recognition in the hidden offscreen
+      document. Runs the same voice engine (offscreen.js) in a pinned tab.
+    -->
+    <main class="page">
+      <header class="top">
+        <span class="logo" aria-hidden="true"></span>
+        <div>
+          <h1>Nova is listening</h1>
+          <p class="sub">Keep this pinned tab open so you can say <strong>"Hey Nova"</strong> on your lecture tab.</p>
+        </div>
+      </header>
+      <section class="card">
+        <p>If Chrome asks for the microphone, click <strong>Allow</strong>. You can close this tab to stop listening; turning the wake word off in Nova's settings also stops it.</p>
+      </section>
+    </main>
+    <script src="config.js"></script>
+    <script src="vendor/porcupine-web-4.0.1.min.js"></script>
+    <script src="offscreen.js"></script>
+  </body>
+</html>

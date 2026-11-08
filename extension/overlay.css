@@ -1213,6 +1213,170 @@ button:disabled {
   }
 }
 
+/* -------------------------------------------------------------- voice --- */
+
+/* Header speaker toggle: shows the speaker when voice replies are on, mute when off. */
+.voice-toggle .icon-off,
+.voice-toggle[data-on="false"] .icon-on {
+  display: none;
+}
+.voice-toggle[data-on="false"] .icon-off {
+  display: block;
+}
+.voice-toggle[data-on="false"] {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* Status dot while Nova listens / thinks / speaks. */
+.status[data-state^="voice-"] .dot {
+  background: var(--pulse);
+  animation: nova-pulse 1.1s ease-in-out infinite;
+}
+
+.mic {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--comet);
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+.mic:hover {
+  background: var(--space-700);
+}
+.mic svg {
+  width: 19px;
+  height: 19px;
+}
+.mic[data-active="true"] {
+  background: var(--nebula);
+  color: var(--white);
+  animation: nova-ring 1.4s ease-out infinite;
+}
+
+.voice-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 20px 8px;
+  padding: 8px 8px 8px 12px;
+  border: 1px solid var(--space-600);
+  border-radius: 12px;
+  background: var(--space-800);
+  color: var(--star-soft);
+  font-size: 13px;
+  font-weight: 500;
+  animation: nova-pop 160ms ease-out;
+}
+.voice-bar-text {
+  flex: 1;
+  min-width: 0;
+}
+.voice-bar-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--space-600);
+  border-radius: 8px;
+  background: var(--space-700);
+  color: var(--comet);
+  font-size: 12px;
+  font-weight: 600;
+}
+.voice-bar-btn:hover {
+  background: var(--space-600);
+}
+.voice-bar-btn svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
+.voice-wave {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 16px;
+}
+.voice-wave i {
+  display: block;
+  width: 3px;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--aurora);
+  transform-origin: center;
+  animation: nova-wave 0.9s ease-in-out infinite;
+}
+.voice-wave i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.voice-wave i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+.voice-wave i:nth-child(4) {
+  animation-delay: 0.45s;
+}
+.nova[data-voice="transcribing"] .voice-wave i {
+  animation-duration: 1.6s;
+  opacity: 0.6;
+}
+
+/* Ranked timestamp results */
+.watch-btn + .watch-btn {
+  margin-top: 6px;
+}
+.watch-btn--top {
+  border-color: var(--aurora);
+  box-shadow: 0 0 10px rgba(103, 232, 249, 0.18);
+}
+.watch-btn-badge {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--aurora);
+  color: var(--void);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+@keyframes nova-pulse {
+  50% {
+    transform: scale(1.35);
+    box-shadow: 0 0 0 5px rgba(192, 132, 252, 0.3);
+  }
+}
+
+@keyframes nova-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.5);
+  }
+  100% {
+    box-shadow: 0 0 0 10px rgba(124, 58, 237, 0);
+  }
+}
+
+@keyframes nova-wave {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
 /* --------------------------------------------------------- animations --- */
 
 @keyframes nova-in {

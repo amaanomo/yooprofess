@@ -49,6 +49,7 @@
   ];
 
   const MAX_SAVED_MESSAGES = 200;
+  const MAX_SESSIONS = 30; // chats kept per lecture
 
   /** Languages offered for translated subtitles. code is sent to /translate; speechLang picks a voice. */
   const SUBTITLE_LANGUAGES = [
@@ -160,6 +161,7 @@
     title: "",
     captions: [],
     history: [],
+    sessions: { activeId: null, list: [] }, // chat sessions for this lecture; history is the active one's messages
     busy: false,
     video: null,
     lastTime: 0,
@@ -195,6 +197,8 @@
       onDownload: downloadJson,
       onReloadCaptions: () => loadCaptions({ force: true }),
       onClearChat: clearChat,
+      onNewChat: newChat,
+      onSwitchChat: switchChat,
       onSeek: seekTo,
       onExplain: explainInDepth,
       subtitleLanguages: SUBTITLE_LANGUAGES,
@@ -235,9 +239,10 @@
     overlay.setChips(DEFAULT_CHIPS);
     refineTitleLater(lectureId);
 
-    state.history = (await storageGet(chatKey(lectureId))) || [];
+    await loadSessions(lectureId);
     if (lectureId !== state.lectureId) return;
     overlay.setHistory(state.history);
+    refreshSessionList();
     if (subs.offerVoice && subs.language && !subs.voice) offerVoiceResume();
     await loadCaptions();
   }
@@ -654,17 +659,94 @@
     overlay.setBusy(value);
   }
 
-  function saveMessage(msg) {
-    state.history.push(msg);
-    if (state.history.length > MAX_SAVED_MESSAGES) state.history.splice(0, state.history.length - MAX_SAVED_MESSAGES);
-    storageSet(chatKey(state.lectureId), state.history);
+  // ---- Chat sessions ---------------------------------------------------------
+  // Each lecture keeps a list of chats. Opening the page starts a fresh one (an empty chat
+  // is reused, never piled up); older chats stay in the menu so the student can reopen them.
+
+  const newSessionId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const activeSession = () => state.sessions.list.find((x) => x.id === state.sessions.activeId);
+
+  function startSession() {
+    const empty = state.sessions.list.find((x) => !x.messages.length);
+    const session = empty || { id: newSessionId(), title: "", at: Date.now(), messages: [] };
+    if (!empty) state.sessions.list.unshift(session);
+    state.sessions.activeId = session.id;
+    state.history = session.messages;
   }
 
-  async function clearChat() {
-    state.history = [];
-    await storageRemove(chatKey(state.lectureId));
-    overlay.setHistory([]);
+  async function loadSessions(lectureId) {
+    let saved = await storageGet(sessionsKey(lectureId));
+    if (!saved || !Array.isArray(saved.list)) {
+      saved = { activeId: null, list: [] };
+      const legacy = await storageGet(chatKey(lectureId)); // the single chat saved before sessions existed
+      if (Array.isArray(legacy) && legacy.length) {
+        const first = legacy.find((m) => m.role === "student");
+        saved.list.push({ id: newSessionId(), title: first ? first.text : "Earlier chat", at: legacy[legacy.length - 1].at || Date.now(), messages: legacy });
+      }
+    }
+    state.sessions = saved;
+    startSession();
+    persistSessions();
+  }
+
+  function persistSessions() {
+    const list = state.sessions.list.filter((x) => x.messages.length || x.id === state.sessions.activeId).slice(0, MAX_SESSIONS);
+    state.sessions.list = list;
+    storageSet(sessionsKey(state.lectureId), state.sessions);
+  }
+
+  function refreshSessionList() {
+    overlay.setSessions({
+      activeId: state.sessions.activeId,
+      list: state.sessions.list.filter((x) => x.messages.length).map((x) => ({ id: x.id, title: x.title || "New chat", at: x.at })),
+    });
+  }
+
+  function showSession() {
+    overlay.setHistory(state.history);
     overlay.setChips(DEFAULT_CHIPS);
+    refreshSessionList();
+  }
+
+  function newChat() {
+    if (state.busy) return;
+    if (state.history.length) {
+      const session = { id: newSessionId(), title: "", at: Date.now(), messages: [] };
+      state.sessions.list.unshift(session);
+      state.sessions.activeId = session.id;
+      state.history = session.messages;
+    }
+    persistSessions();
+    showSession();
+    log("New chat for", state.lectureId);
+  }
+
+  function switchChat(id) {
+    const target = state.sessions.list.find((x) => x.id === id);
+    if (state.busy || !target || id === state.sessions.activeId) return;
+    state.sessions.activeId = id;
+    state.history = target.messages;
+    persistSessions();
+    showSession();
+  }
+
+  function saveMessage(msg) {
+    const session = activeSession();
+    if (!session) return;
+    state.history.push(msg);
+    if (state.history.length > MAX_SAVED_MESSAGES) state.history.splice(0, state.history.length - MAX_SAVED_MESSAGES);
+    if (!session.title && msg.role === "student") session.title = String(msg.text || "").slice(0, 60);
+    session.at = Date.now();
+    persistSessions();
+    refreshSessionList();
+  }
+
+  /** "Clear chat": deletes the chat you're in. */
+  async function clearChat() {
+    state.sessions.list = state.sessions.list.filter((x) => x.id !== state.sessions.activeId);
+    startSession();
+    persistSessions();
+    showSession();
     log("Chat cleared for", state.lectureId);
   }
 
@@ -977,7 +1059,8 @@
   }
 
   const captionsKey = (id) => `nova:captions:${id}`;
-  const chatKey = (id) => `nova:chat:${id}`;
+  const chatKey = (id) => `nova:chat:${id}`; // legacy single chat, migrated into a session
+  const sessionsKey = (id) => `nova:sessions:${id}`;
 
   async function storageGet(key) {
     try {

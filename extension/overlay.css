@@ -307,6 +307,28 @@ button:disabled {
   color: var(--star);
 }
 
+.menu-chats {
+  margin: 2px 0 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chats-label {
+  padding: 6px 10px 2px;
+}
+
+.menu-chat span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.menu-chat.active {
+  background: var(--mint);
+  font-weight: 600;
+}
+
 .menu-item:disabled {
   opacity: 0.35;
 }

@@ -55,6 +55,8 @@
     send: ["M21 3 10 14", "M21 3l-7 18-4-7-7-4z"],
     download: ["M12 4v11", "M7 10l5 5 5-5", "M5 20h14"],
     refresh: ["M20 11a8 8 0 1 0-2.3 5.7", "M20 4v7h-7"],
+    plus: ["M12 5v14", "M5 12h14"],
+    chat: ["M4 5h16v11H9l-5 4z"],
     trash: ["M4 7h16", "M9 7V4h6v3", "M6 7l1 13h10l1-13"],
     info: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M12 16v-5", "M12 8h.01"],
     check: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M8 12.5l2.5 2.5L16 9.5"],
@@ -147,6 +149,8 @@
    * @param {() => void} opts.onDownload
    * @param {() => void} opts.onReloadCaptions
    * @param {() => void} opts.onClearChat
+   * @param {() => void} opts.onNewChat
+   * @param {(id: string) => void} opts.onSwitchChat
    * @param {(msg: object) => void} opts.onExplain  "Explain in depth" clicked on an Nova reply
    * @param {{code:string,label:string}[]} opts.subtitleLanguages
    * @param {(code: string|null) => void} opts.onSubtitleLanguage
@@ -167,6 +171,8 @@
         onDownload() {},
         onReloadCaptions() {},
         onClearChat() {},
+        onNewChat() {},
+        onSwitchChat() {},
         onSeek() {},
         onExplain() {},
         subtitleLanguages: [],
@@ -205,13 +211,17 @@
       h("button", { class: "menu-item", type: "button", role: "menuitem", "data-action": action }, icon(iconName), h("span", { text: label }));
     const downloadItem = menuItem("download", "Download captions JSON", "download");
     const reloadItem = menuItem("refresh", "Reload captions", "reload");
-    const clearItem = menuItem("trash", "Clear chat", "clear");
+    const newChatItem = menuItem("plus", "New chat", "newchat");
+    const clearItem = menuItem("trash", "Delete this chat", "clear");
+    const chatList = h("div", { class: "menu-chats" });
     const subtitlesItem = menuItem("captions", "Subtitles…", "subtitles");
     downloadItem.disabled = true;
     const menu = h(
       "div",
       { class: "menu", role: "menu", hidden: true },
       h("div", { class: "menu-info" }, h("div", { class: "menu-label", text: "This lecture" }), menuTitle, menuId),
+      newChatItem,
+      chatList,
       subtitlesItem,
       downloadItem,
       reloadItem,
@@ -491,6 +501,8 @@
       if (item.dataset.action === "download") o.onDownload();
       if (item.dataset.action === "reload") o.onReloadCaptions();
       if (item.dataset.action === "clear") o.onClearChat();
+      if (item.dataset.action === "newchat") o.onNewChat();
+      if (item.dataset.action === "chat") o.onSwitchChat(item.dataset.id);
       if (item.dataset.action === "subtitles") setPopOpen(true);
     });
     // Close the menu / subtitles popover on any click outside them (inside or outside the overlay).
@@ -691,6 +703,16 @@
       setDownloadEnabled(enabled) {
         downloadItem.disabled = !enabled;
         downloadItem.title = enabled ? "" : "No captions loaded yet";
+      },
+
+      /** The chats saved for this lecture: { activeId, list: [{ id, title, at }] }, newest first. */
+      setSessions({ activeId, list }) {
+        const rows = (list || []).slice(0, 8).map((c) => {
+          const row = h("button", { class: `menu-item menu-chat${c.id === activeId ? " active" : ""}`, type: "button", role: "menuitem", "data-action": "chat", "data-id": c.id }, icon("chat"), h("span", { text: c.title }));
+          row.title = new Date(c.at).toLocaleString();
+          return row;
+        });
+        chatList.replaceChildren(...(rows.length ? [h("div", { class: "menu-label chats-label", text: "Chats" }), ...rows] : []));
       },
 
       /** Replace the whole conversation (welcome + saved history). Clears any notice. */

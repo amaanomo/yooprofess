@@ -1,7 +1,7 @@
 /*
  * Nova: settings page. Grants mic access to the extension (the offscreen doc
- * can't show a permission prompt itself), stores the Picovoice key, and picks
- * the ElevenLabs voice.
+ * can't show a permission prompt itself), shows the wake word status, and picks
+ * the voice.
  */
 (() => {
   "use strict";
@@ -15,8 +15,6 @@
     micHelp: $("mic-help"),
     micStatus: $("mic-status"),
     wakeEnabled: $("wake-enabled"),
-    pvKey: $("pv-key"),
-    pvSave: $("pv-save"),
     wakeStatus: $("wake-status"),
     wakeDetail: $("wake-detail"),
     voiceReplies: $("voice-replies"),
@@ -44,8 +42,6 @@
     els.wakeEnabled.checked = settings.wakeWordEnabled;
     els.voiceReplies.checked = settings.voiceReplies;
     els.pauseVideo.checked = settings.pauseVideoOnWake;
-    const key = (await chrome.storage.local.get(cfg.PICOVOICE_KEY))[cfg.PICOVOICE_KEY] || "";
-    els.pvKey.value = key;
   }
 
   async function saveSettings(patch) {
@@ -106,7 +102,6 @@
   const WAKE_TEXT = {
     listening: ["Listening for \"Hey Nova\"", "ok"],
     page: ["Ready: listens on your lecture tab", "ok"],
-    "needs-keyword": ["Missing the Picovoice keyword file", "warn"],
     starting: ["Starting…", "warn"],
     off: ["Off", "warn"],
     "recognition-blocked": ["Switching to a listener tab…", "warn"],
@@ -143,12 +138,6 @@
   });
 
   els.wakeEnabled.addEventListener("change", () => saveSettings({ wakeWordEnabled: els.wakeEnabled.checked }));
-  els.pvSave.addEventListener("click", async () => {
-    await chrome.storage.local.set({ [cfg.PICOVOICE_KEY]: els.pvKey.value.trim() });
-    els.pvSave.textContent = "Saved";
-    setTimeout(() => (els.pvSave.textContent = "Save"), 1500);
-    setTimeout(refreshStatus, 1200);
-  });
 
   // ---- Voice ----------------------------------------------------------------
 

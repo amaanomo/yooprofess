@@ -9,15 +9,8 @@
     BACKEND_URL: "https://yooprofess-production.up.railway.app",
     // BACKEND_URL: "http://localhost:8000", // when running backend/server.py locally
 
-    /** Picovoice keyword file trained for "Hey Nova" on platform Web (WASM). */
-    WAKE_KEYWORD_PATH: "wake/hey-nova_wasm.ppn",
-    WAKE_MODEL_PATH: "wake/porcupine_params.pv",
-    WAKE_SENSITIVITY: 0.6,
-
     /** Settings live in chrome.storage.sync under this key. */
     SETTINGS_KEY: "nova:settings",
-    /** The Picovoice AccessKey lives in chrome.storage.local (not synced). */
-    PICOVOICE_KEY: "nova:picovoiceKey",
     DEFAULT_SETTINGS: {
       wakeWordEnabled: true,
       voiceReplies: true,

@@ -37,22 +37,6 @@
           <span>Listen for "Hey Nova" in the background</span>
         </label>
         <p>Works out of the box: Nova listens on your Panopto lecture tab while it's open and visible, using Chrome's speech recognition. No key needed. The first time, Chrome asks to allow the microphone for the Panopto site. Click <strong>Allow</strong>. While it's on, Chrome sends what the mic hears to Google's speech service.</p>
-        <details>
-          <summary>Optional: on-device wake word (Picovoice)</summary>
-          <p>For private, on-device detection, add a Picovoice AccessKey and keyword file. Nova uses Picovoice automatically once both are present.</p>
-          <label class="field">
-            <span>Picovoice AccessKey</span>
-            <div class="row">
-              <input id="pv-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your AccessKey" />
-              <button id="pv-save" type="button">Save</button>
-            </div>
-            <small>From <a href="https://console.picovoice.ai/" target="_blank" rel="noopener">console.picovoice.ai</a>. Stays on this computer (not synced).</small>
-          </label>
-          <ol>
-            <li>In the Picovoice Console open <em>Porcupine</em>, type <strong>Hey Nova</strong>, and choose English and <strong>Web (WASM)</strong>. Train it and download it.</li>
-            <li>Save the <code>.ppn</code> file as <code>extension/wake/hey-nova_wasm.ppn</code> and reload the extension.</li>
-          </ol>
-        </details>
         <div class="row">
           <span class="label">Status</span>
           <span id="wake-status" class="pill">Checking…</span>

@@ -33,14 +33,8 @@ async function getSettings() {
   return { ...cfg.DEFAULT_SETTINGS, ...(stored || {}) };
 }
 
-async function getAccessKey() {
-  return (await chrome.storage.local.get(cfg.PICOVOICE_KEY))[cfg.PICOVOICE_KEY] || "";
-}
-
 chrome.storage.onChanged.addListener((changes, area) => {
-  if ((area === "sync" && changes[cfg.SETTINGS_KEY]) || (area === "local" && changes[cfg.PICOVOICE_KEY])) {
-    pushOffscreenConfig();
-  }
+  if (area === "sync" && changes[cfg.SETTINGS_KEY]) pushOffscreenConfig();
 });
 
 // ============================================================================
@@ -148,14 +142,14 @@ async function toOffscreen(message) {
 }
 
 async function pushOffscreenConfig() {
-  const [settings, accessKey] = await Promise.all([getSettings(), getAccessKey()]);
-  return toOffscreen({ type: "NOVA_OFFSCREEN_CONFIG", settings, accessKey });
+  return toOffscreen({ type: "NOVA_OFFSCREEN_CONFIG", settings: await getSettings() });
 }
 
 chrome.runtime.onStartup.addListener(() => pushOffscreenConfig());
 chrome.runtime.onInstalled.addListener(async (details) => {
   // Retry the hidden voice page after every install/reload; fall back to the tab again only if needed.
-  await chrome.storage.local.remove("nova:listenerMode");
+  // "nova:picovoiceKey": left over from the removed Picovoice wake word.
+  await chrome.storage.local.remove(["nova:listenerMode", "nova:picovoiceKey"]);
   pushOffscreenConfig();
   chrome.alarms.create("nova-keepalive", { periodInMinutes: 1 });
   if (details.reason === "install") chrome.runtime.openOptionsPage();

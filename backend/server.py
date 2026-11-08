@@ -18,6 +18,7 @@ Endpoints (see the "Backend contract" in extension/content.js):
   POST /summary    summary, key points and timestamped chapters for a lecture
   POST /explain    whiteboard lesson plan
   GET  /instructor instructor dashboard (needs NOVA_INSTRUCTOR_KEY): lectures, themes, question timeline
+  POST /instructor/api/recitation  build a 50-minute recitation plan and email it (see recitation.py for NOVA_SMTP_* and NOVA_RECITATION_EMAIL)
   POST /topics     hot topics: the lecture's most-asked themes (see topics.py; set NOVA_DB_PATH on Railway)
   GET  /voices     ElevenLabs voices (optional voice engine)
   POST /tts        {text, voice_id} -> audio/mpeg (ElevenLabs)
@@ -39,6 +40,7 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import recitation
 import topics as hot_topics
 
 PORT = int(os.environ.get("PORT", "8000"))
@@ -134,6 +136,7 @@ def complete(system, user, max_tokens, json_output=False, image_b64=None, histor
 
 INSTRUCTOR_KEY = os.environ.get("NOVA_INSTRUCTOR_KEY", "")  # unset = the instructor dashboard is off
 INSTRUCTOR_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "instructor.html")
+RECITATION_STATE = {"plans": {}, "sent": {}}  # cached plans + per-lecture send times (in memory)
 LECTURES = {}  # lecture_id -> {"title": str, "captions": [...]}
 STORE = hot_topics.QuestionStore()  # anonymous question log for Hot topics (SQLite at NOVA_DB_PATH)
 TRANSLATIONS = {}  # (lecture_id, language_code, cue_index) -> translated text. In memory: lost on restart.
@@ -747,16 +750,24 @@ class Handler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
 
+    def _instructor_auth(self):
+        """True if the request carries the instructor key; otherwise sends the error and returns False."""
+        if not INSTRUCTOR_KEY:
+            self._send(403, {"error": "instructor dashboard is off: set NOVA_INSTRUCTOR_KEY"})
+            return False
+        given = self.headers.get("X-Instructor-Key", "")
+        if not hmac.compare_digest(given.encode(), INSTRUCTOR_KEY.encode()):
+            self._send(401, {"error": "wrong or missing key"})
+            return False
+        return True
+
     def _instructor(self, url):
         """GET /instructor (page) and /instructor/api/* (JSON, needs NOVA_INSTRUCTOR_KEY)."""
         if url.path == "/instructor":
             with open(INSTRUCTOR_PAGE, "rb") as f:
                 return self._send_bytes(200, f.read(), "text/html; charset=utf-8")
-        if not INSTRUCTOR_KEY:
-            return self._send(403, {"error": "instructor dashboard is off: set NOVA_INSTRUCTOR_KEY"})
-        given = self.headers.get("X-Instructor-Key", "")
-        if not hmac.compare_digest(given.encode(), INSTRUCTOR_KEY.encode()):
-            return self._send(401, {"error": "wrong or missing key"})
+        if not self._instructor_auth():
+            return
         if url.path == "/instructor/api/lectures":
             return self._send(200, {"lectures": STORE.lectures()})
         if url.path == "/instructor/api/lecture":
@@ -795,6 +806,17 @@ class Handler(BaseHTTPRequestHandler):
                 content_type = (self.headers.get("Content-Type") or "audio/webm").split(";")[0].strip()
                 return self._send(200, {"text": transcribe(raw, content_type)})
             body = json.loads(raw or b"{}")
+            if self.path == "/instructor/api/recitation":
+                if not self._instructor_auth():
+                    return
+                lecture_id = str(body.get("lecture_id") or "")
+                if not lecture_id:
+                    raise BadRequest("lecture_id is required")
+                data = hot_topics.topics({"lecture_id": lecture_id}, STORE, complete)
+                known = next((l for l in STORE.lectures() if l["lecture_id"] == lecture_id), {})
+                title = known.get("title") or (LECTURES.get(lecture_id) or {}).get("title") or ""
+                code, out = recitation.export_plan(lecture_id, title, data, complete, RECITATION_STATE)
+                return self._send(code, out)
             if self.path == "/tts":
                 return self._send_bytes(200, tts(body.get("text"), body.get("voice_id")), "audio/mpeg")
             if self.path == "/lectures":

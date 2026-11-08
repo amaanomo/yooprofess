@@ -16,7 +16,14 @@
  *     valid video command.
  *   - Settling: a question ends when Chrome marks it final OR when the words stop
  *     changing for SETTLE_MS (background noise can keep Chrome "listening" forever).
- *   - Vocabulary hints ("Nova", "pause", "skip to", ...) where Chrome supports them.
+ *   - Self-healing: if Chrome never starts a session (no onstart), a watchdog
+ *     throws that recognizer away and starts a fresh one (without our mic track
+ *     on the second try). If the mic was blocked and is later allowed, listening
+ *     resumes without a page reload.
+ *
+ * No vocabulary hints (rec.phrases): Chrome's cloud recognizer rejects them with
+ * "phrases-not-supported", which used to leave recognition dead. WAKE_RE already
+ * covers the usual mishearings.
  *
  *   const s = NovaSpotter.create({ onWake, onInterim, onTranscript, onNoSpeech, onStatus });
  *   s.start(); s.stop();
@@ -39,12 +46,7 @@
   const QUESTION_WAIT_MS = 8000; // after "Hey Nova" with nothing else, wait this long for the question
   const SETTLE_MS = 1200; // words unchanged this long = the student finished (even if Chrome isn't "final")
   const MAX_ALTERNATIVES = 5;
-
-  // Words we expect, as hints for Chrome's recognizer (only used where supported).
-  const HINT_PHRASES = [
-    "Hey Nova", "Yo Nova", "Nova", "pause the video", "resume", "play", "skip to", "go back",
-    "rewind", "skip ahead", "seconds", "minutes", "speed", "mute", "unmute", "louder", "quieter",
-  ];
+  const START_TIMEOUT_MS = 4000; // no onstart this long after start() = Chrome stalled: retry
 
   const MIC_CONSTRAINTS = {
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
@@ -90,7 +92,41 @@
       fatal: null,
       micStream: null, // echo-cancelled mic track for recognition
       micTried: false,
+      startTimer: null,
+      stalls: 0, // starts that never reached onstart in a row
+      watchingPermission: false,
     };
+
+    /** If the mic gets allowed after a "not-allowed", resume without a page reload. */
+    async function watchPermission() {
+      if (s.watchingPermission || !navigator.permissions) return;
+      s.watchingPermission = true;
+      try {
+        const perm = await navigator.permissions.query({ name: "microphone" });
+        perm.onchange = () => {
+          console.log("[Nova] Microphone permission is now", perm.state);
+          if (perm.state !== "granted" || !s.fatal) return;
+          s.fatal = null;
+          s.micTried = false;
+          s.wanted = true;
+          start();
+        };
+      } catch (_) {
+        /* permissions API unavailable */
+      }
+    }
+
+    /** Throw a recognizer away so its late events can't touch the current state. */
+    function discard(rec) {
+      rec.onstart = rec.onresult = rec.onerror = rec.onend = null;
+      try {
+        rec.abort();
+      } catch (_) {
+        /* never started */
+      }
+      if (s.rec === rec) s.rec = null;
+      s.running = false;
+    }
 
     function status(state, detail = "") {
       h.onStatus({ wake: state, detail });
@@ -132,31 +168,25 @@
       rec.interimResults = true;
       rec.maxAlternatives = MAX_ALTERNATIVES;
       rec.lang = h.lang || navigator.language || "en-US";
-      try {
-        // Contextual biasing (newer Chrome); silently skipped elsewhere.
-        if (!s.noPhrases && "phrases" in rec && root.SpeechRecognitionPhrase) {
-          rec.phrases = HINT_PHRASES.map((p) => new root.SpeechRecognitionPhrase(p, 5));
-        }
-      } catch (_) {
-        /* not supported */
-      }
       s.consumed = 0;
       s.length = 0;
+      watchPermission();
       rec.onstart = () => {
+        if (s.rec !== rec) return;
+        clearTimeout(s.startTimer);
         s.running = true;
         s.backoff = 300;
+        s.stalls = 0;
+        console.log(`[Nova] Speech recognition started (${rec.lang})`);
         status("listening", 'Say "Hey Nova" on your lecture tab.');
       };
-      rec.onresult = (event) => onResults(event.results);
+      rec.onresult = (event) => {
+        if (s.rec === rec) onResults(event.results);
+      };
       rec.onerror = (event) => {
+        if (s.rec !== rec) return;
         const err = event.error;
         if (err === "no-speech" || err === "aborted") return; // normal; onend restarts
-        if (err === "phrases-not-supported") {
-          // Chrome exposes rec.phrases but this recognizer rejects it: restart without hints.
-          if (!s.noPhrases) console.info("[Nova] speech hints not supported here; listening without them");
-          s.noPhrases = true;
-          return; // onend restarts
-        }
         console.warn("[Nova] speech recognition error:", err, event.message || "");
         if (err === "not-allowed" || err === "service-not-allowed" || err === "audio-capture" || err === "language-not-supported") {
           s.fatal = err; // don't hammer Chrome with retries; the student has to fix it
@@ -168,6 +198,8 @@
         }
       };
       rec.onend = () => {
+        if (s.rec !== rec) return;
+        clearTimeout(s.startTimer);
         s.running = false;
         s.rec = null;
         // Session ended mid-question: use what we have, or keep waiting in the next session.
@@ -181,7 +213,8 @@
         else releaseMic();
       };
 
-      const track = await cleanMicTrack();
+      // After a stalled start, skip our processed track: let Chrome use its default mic.
+      const track = s.stalls === 0 ? await cleanMicTrack() : null;
       if (s.rec !== rec || !s.wanted) {
         s.rec = s.rec === rec ? null : s.rec;
         return; // stopped while the mic was opening
@@ -198,15 +231,30 @@
           s.rec = null;
           console.warn("[Nova] speech recognition didn't start:", err2);
           setTimeout(() => s.wanted && start(), 1000);
+          return;
         }
       }
+      // Chrome can accept start() and then never begin, with no error and no onend.
+      // Don't wait forever: throw this recognizer away and start a fresh one.
+      clearTimeout(s.startTimer);
+      s.startTimer = setTimeout(() => {
+        if (s.rec !== rec || s.running) return;
+        s.stalls++;
+        console.warn(`[Nova] speech recognition didn't start; retrying${s.stalls === 1 ? " with Chrome's default mic" : ""}`);
+        discard(rec);
+        releaseMic(); // the retry uses Chrome's default mic, not our track
+        const wait = Math.min(1000 * s.stalls, 10000);
+        setTimeout(() => s.wanted && start(), wait);
+      }, START_TIMEOUT_MS);
     }
 
     function stop() {
       s.wanted = false;
+      clearTimeout(s.startTimer);
       endQuestion();
-      if (s.rec) s.rec.abort();
-      else releaseMic();
+      if (s.rec && s.running) return s.rec.abort(); // onend releases the mic
+      if (s.rec) discard(s.rec); // never started: no onend will come
+      releaseMic();
     }
 
     function onResults(results) {

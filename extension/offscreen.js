@@ -4,10 +4,8 @@
  * One hidden extension page owns the microphone and the speaker, so no website
  * ever has to grant mic access and page autoplay rules don't block Nova's voice.
  *
- *   1. Wake word. Default: Chrome's speech recognition runs continuously and we
- *      look for "hey nova" in the text (no key needed; "Hey Nova, what's X?" works
- *      in one breath). If a Picovoice AccessKey + keyword file are set up,
- *      Porcupine (on-device WASM) is used instead.
+ *   1. Wake word status. "Hey Nova" itself is heard by the lecture tab
+ *      (spotter.js, Chrome speech recognition); this page only reports that.
  *   2. Capture: after the wake word (or a mic-button press), turns the question
  *      into text. Free engine (default): Chrome's built-in speech recognition.
  *      ElevenLabs engine: records until silence, POSTs to <backend>/transcribe.
@@ -28,7 +26,7 @@
   const log = (...args) => console.log("[Nova voice]", ...args);
   const warn = (...args) => console.warn("[Nova voice]", ...args);
 
-  const FRAME_LENGTH = 512; // Porcupine frame at 16 kHz (32 ms)
+  const FRAME_LENGTH = 512; // mic frame at 16 kHz (32 ms), for silence detection
   const CAPTURE = {
     maxMs: 15000, // hard stop
     noSpeechMs: 6000, // give up if the student never starts talking
@@ -38,14 +36,10 @@
 
   const state = {
     settings: { ...cfg.DEFAULT_SETTINGS },
-    accessKey: "",
     stream: null,
     ctx: null,
     source: null,
     node: null,
-    porcupine: null,
-    porcupineKey: "", // accessKey the current instance was built with
-    processing: Promise.resolve(),
     noiseFloor: 0.01,
     capture: null, // { recorder, chunks, startedAt, speechMs, lastVoiceAt, heardSpeech, timer }
     audio: null, // HTMLAudioElement currently speaking
@@ -92,7 +86,7 @@
     if (!msg || msg.target !== "offscreen") return;
     switch (msg.type) {
       case "NOVA_OFFSCREEN_CONFIG":
-        applyConfig(msg.settings, msg.accessKey);
+        applyConfig(msg.settings);
         sendResponse({ ok: true });
         break;
       case "NOVA_START_CAPTURE":
@@ -116,15 +110,9 @@
     }
   });
 
-  async function applyConfig(settings, accessKey) {
+  function applyConfig(settings) {
     state.settings = { ...cfg.DEFAULT_SETTINGS, ...(settings || {}) };
-    state.accessKey = String(accessKey || "").trim();
-    try {
-      await syncWakeWord();
-    } catch (err) {
-      warn("wake word setup failed", err);
-      setStatus("error", `Wake word setup failed: ${(err && err.message) || err}`);
-    }
+    syncWakeWord();
   }
 
   // ===========================================================================
@@ -147,7 +135,7 @@
         watchingPermission = true;
         perm.onchange = () => {
           log("Microphone permission is now", perm.state);
-          if (perm.state === "granted") syncWakeWord().catch((err) => warn("resync failed", err));
+          if (perm.state === "granted") syncWakeWord();
         };
       }
       return perm.state; // "granted" | "prompt" | "denied"
@@ -205,7 +193,7 @@
   }
 
   function releaseMicIfIdle() {
-    if (state.porcupine || state.capture || state.spot.wanted) return;
+    if (state.capture || state.spot.wanted) return;
     if (state.stream) state.stream.getTracks().forEach((t) => t.stop());
     if (state.ctx) state.ctx.close().catch(() => {});
     state.stream = state.ctx = state.source = state.node = null;
@@ -228,10 +216,6 @@
     } else {
       // Slowly follow background noise while idle.
       state.noiseFloor = state.noiseFloor * 0.98 + Math.min(level, 0.2) * 0.02;
-      if (state.porcupine) {
-        const p = state.porcupine;
-        state.processing = state.processing.then(() => p.process(frame)).catch((err) => warn("process", err));
-      }
     }
   }
 
@@ -239,76 +223,12 @@
   // Wake word
   // ===========================================================================
 
-  async function keywordFileExists() {
-    try {
-      const res = await fetch(cfg.WAKE_KEYWORD_PATH);
-      return res.ok;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  async function syncWakeWord() {
-    if (!state.settings.wakeWordEnabled) {
-      await stopWakeWord();
-      stopSpotter();
-      setStatus("off");
-      return;
-    }
-    // Without Picovoice, "Hey Nova" is heard by the lecture tab itself (spotter.js):
-    // Chrome's speech recognition is unreliable in hidden pages like this one.
+  function syncWakeWord() {
+    // "Hey Nova" is heard by the lecture tab itself (spotter.js): Chrome's speech
+    // recognition is unreliable in hidden pages like this one.
     stopSpotter();
-    if (!state.accessKey) {
-      await stopWakeWord();
-      setStatus("page", "Nova listens on your Panopto lecture tab while it's open and visible.");
-      return;
-    }
-    if (!(await keywordFileExists())) {
-      await stopWakeWord();
-      setStatus("needs-keyword", `A Picovoice key is saved but ${cfg.WAKE_KEYWORD_PATH} is missing. Add the file, or clear the key to use the lecture-tab listener.`);
-      return;
-    }
-    if (state.porcupine && state.porcupineKey === state.accessKey) return;
-    await stopWakeWord();
-    if (!(await ensureMic())) return;
-
-    setStatus("starting", "Starting the Picovoice wake word…");
-    try {
-      const { Porcupine } = globalThis.PorcupineWeb;
-      state.porcupine = await Porcupine.create(
-        state.accessKey,
-        [{ label: "hey nova", publicPath: cfg.WAKE_KEYWORD_PATH, sensitivity: cfg.WAKE_SENSITIVITY, forceWrite: true }],
-        onWake,
-        { publicPath: cfg.WAKE_MODEL_PATH },
-        { device: "cpu:1", processErrorCallback: (err) => warn("Porcupine error", err) }
-      );
-      state.porcupineKey = state.accessKey;
-      setStatus("listening", `Say "Hey Nova" (Picovoice on-device wake word ${state.porcupine.version}).`);
-    } catch (err) {
-      warn("Porcupine init failed", err);
-      state.porcupine = null;
-      setStatus("error", String((err && err.message) || err));
-      releaseMicIfIdle();
-    }
-  }
-
-  async function stopWakeWord() {
-    const p = state.porcupine;
-    if (!p) return;
-    state.porcupine = null;
-    state.porcupineKey = "";
-    await state.processing.catch(() => {});
-    await p.release().catch(() => {});
-    releaseMicIfIdle();
-  }
-
-  function onWake(detection) {
-    if (state.capture) return; // already listening for a question
-    log("Wake word:", detection && detection.label);
-    stopSpeaking(); // barge-in
-    chime();
-    send("NOVA_WAKE");
-    startCapture("wake");
+    if (!state.settings.wakeWordEnabled) setStatus("off");
+    else setStatus("page", "Nova listens on your Panopto lecture tab while it's open and visible.");
   }
 
   // ---- Chrome speech-recognition wake word ----------------------------------

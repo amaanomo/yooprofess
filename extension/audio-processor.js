@@ -1,6 +1,6 @@
 /*
- * Nova: AudioWorklet that turns mic audio into 16 kHz Int16 frames for Porcupine
- * (and for the silence detector). Loaded by offscreen.js with addModule(). It is a
+ * Nova: AudioWorklet that turns mic audio into 16 kHz Int16 frames for the
+ * silence detector (ElevenLabs capture). Loaded by offscreen.js with addModule(). It is a
  * real file (not a blob: URL) because the extension CSP only allows 'self' scripts.
  *
  * processorOptions: { frameLength: 512, targetRate: 16000 }

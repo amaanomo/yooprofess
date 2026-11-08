@@ -3,8 +3,8 @@
  *
  * "Hey Nova" is heard right here in the lecture tab (spotter.js, Chrome speech
  * recognition) while the tab is visible. Nova's voice is played by background.js
- * (chrome.tts). The optional Picovoice / ElevenLabs engines live in the offscreen
- * document and reach this file as NOVA_* messages.
+ * (chrome.tts). The optional ElevenLabs engine lives in the offscreen document
+ * and reaches this file as NOVA_* messages.
  *
  *   const voice = NovaVoiceClient.attach({ getOverlay, onWake, onTranscript });
  *   voice.speak(text)     // only if voice replies are on
@@ -41,12 +41,9 @@
    * @param {(text: string) => void} opts.onTranscript  what the student said
    * @param {(info: {reason, error}) => void} [opts.onNoTranscript]
    */
-  const PICOVOICE_KEY = "nova:picovoiceKey";
-
   function attach(opts) {
     let settings = { ...DEFAULTS };
     let voiceState = "idle";
-    let picovoice = false; // a Picovoice key is saved: the offscreen doc does the wake word
     let spotter = null;
     let lastNotice = "";
 
@@ -58,18 +55,16 @@
       o.setVoiceState(voiceState);
     };
 
+    // Start listening once settings are in (they decide the wake word and its language).
     chrome.storage.sync.get(SETTINGS_KEY).then(
       (res) => {
         settings = { ...DEFAULTS, ...(res[SETTINGS_KEY] || {}) };
         syncOverlay();
+        syncSpotter();
       },
-      () => {}
+      () => syncSpotter()
     );
     chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === "local" && changes[PICOVOICE_KEY]) {
-        picovoice = Boolean(String(changes[PICOVOICE_KEY].newValue || "").trim());
-        syncSpotter();
-      }
       if (area !== "sync" || !changes[SETTINGS_KEY]) return;
       settings = { ...DEFAULTS, ...(changes[SETTINGS_KEY].newValue || {}) };
       syncOverlay();
@@ -121,9 +116,9 @@
       return spotter;
     }
 
-    /** Listen while this tab is visible and the wake word is on (and Picovoice isn't doing it). */
+    /** Listen while this tab is visible and the wake word is on. */
     function syncSpotter() {
-      const want = settings.wakeWordEnabled && !picovoice && document.visibilityState === "visible";
+      const want = settings.wakeWordEnabled && document.visibilityState === "visible";
       const s = getSpotter();
       if (!s) return;
       if (want) s.start();
@@ -141,13 +136,6 @@
       console.info("[Nova] Extension was reloaded: this copy stopped listening. Reload the page to get the new one.");
     }, 2000);
 
-    chrome.storage.local.get(PICOVOICE_KEY).then(
-      (res) => {
-        picovoice = Boolean(String(res[PICOVOICE_KEY] || "").trim());
-        syncSpotter();
-      },
-      () => syncSpotter()
-    );
     document.addEventListener("visibilitychange", syncSpotter);
 
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -197,7 +185,7 @@
         send({ type: "NOVA_STOP_SPEAKING" });
       },
       async listen() {
-        const s = !picovoice && getSpotter();
+        const s = getSpotter();
         if (s && !s.blocked) {
           // Mic button with the in-tab listener: the next thing said is the question.
           if (s.listening) {

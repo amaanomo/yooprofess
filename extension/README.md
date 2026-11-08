@@ -6,8 +6,8 @@ Plain JavaScript, HTML and CSS. No framework, no build step. **New to this? Foll
 
 ```
 extension/
-├── manifest.json       MV3 manifest: permissions, content script, CSP (wasm)
-├── config.js           BACKEND_URL, wake-word file paths, default settings
+├── manifest.json       MV3 manifest: permissions, content script, CSP
+├── config.js           BACKEND_URL, default settings
 ├── background.js       toolbar button, backend calls (STUB_MODE), voice router (chrome.tts)
 ├── content.js          lecture detection, captions, video tracking, chat, voice commands
 ├── srt.js              SRT parser + caption-window helper, with tests (node srt.js)
@@ -18,22 +18,20 @@ extension/
 ├── subtitles.css       the subtitle pill's styles
 ├── spotter.js          "Hey Nova" listener that runs in the lecture tab (Chrome speech recognition)
 ├── voice-client.js     "Hey Nova" glue for content.js (wake, live transcript, speak); global NovaVoiceClient
-├── offscreen.html/js   hidden page for the optional Picovoice / ElevenLabs engines
-├── audio-processor.js  AudioWorklet: mic -> 16 kHz Int16 frames
-├── options.html/js/css settings: mic permission, voice picker, optional Picovoice key
+├── offscreen.html/js   hidden page for the optional ElevenLabs engine (mic capture + audio)
+├── audio-processor.js  AudioWorklet: mic -> 16 kHz Int16 frames (silence detection)
+├── options.html/js/css settings: mic permission, wake word status, voice picker
 ├── listener.html       fallback pinned tab that runs offscreen.js if Chrome blocks it offscreen
 ├── explain.html/js/css "Explain in depth" whiteboard lesson tab
 ├── overlay.js/css      the Nova card, built inside a Shadow DOM root
-├── vendor/             @picovoice/porcupine-web 4.0.1 (IIFE build, Apache-2.0)
-├── wake/               porcupine_params.pv + your hey-nova_wasm.ppn (see wake/README.md)
 └── icons/              toolbar icons; put the mascot here as nova.png
 ```
 
 ### Voice flow
 
-`spotter.js` hears "Hey Nova" in the lecture tab itself (Chrome's speech recognition is unreliable in hidden pages) and hands the question to `content.js`. With a Picovoice key, `offscreen.js` hears it instead and sends `NOVA_WAKE` to `background.js`. The background routes it to the active tab's lecture frame (registered by `content.js`; re-injected if the tab predates an extension reload). Tabs without a Panopto lecture are ignored. The overlay pops up while Chrome's speech recognition (or ElevenLabs via `POST /transcribe`) turns the question into text. The tab then either runs a local video command or calls `/ask`. The answer is spoken with `chrome.tts` (free) or ElevenLabs `POST /tts`. Saying "Hey Nova" again stops it mid-sentence.
+`spotter.js` hears "Hey Nova" in the lecture tab itself (Chrome's speech recognition is unreliable in hidden pages) and hands the question to `content.js`. `content.js` registers its lecture frame with `background.js` (re-injected if the tab predates an extension reload), so the toolbar button and voice messages land there. Tabs without a Panopto lecture are ignored. The overlay pops up while Chrome's speech recognition (or ElevenLabs via `POST /transcribe`) turns the question into text. The tab then either runs a local video command or calls `/ask`. The answer is spoken with `chrome.tts` (free) or ElevenLabs `POST /tts`. Saying "Hey Nova" again stops it mid-sentence.
 
-Wake word engines: by default, Chrome's speech recognition runs continuously and `offscreen.js` fuzzy-matches "hey nova" in the text, so "Hey Nova, what's X?" works in one breath. Picovoice Porcupine (on-device) is used instead when an AccessKey and `wake/hey-nova_wasm.ppn` are present. If Chrome refuses speech recognition in the offscreen document, `background.js` switches to `listener.html`, a pinned tab that runs the same `offscreen.js`.
+Wake word: Chrome's speech recognition runs continuously in the lecture tab while it's visible, and `spotter.js` fuzzy-matches "hey nova" in the text, so "Hey Nova, what's X?" works in one breath. If Chrome accepts a session but never starts it, a watchdog retries with a fresh recognizer (falling back to Chrome's default mic). If Chrome refuses speech recognition in the offscreen document, `background.js` switches to `listener.html`, a pinned tab that runs the same `offscreen.js`.
 
 ## Load it
 

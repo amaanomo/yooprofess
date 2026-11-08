@@ -78,10 +78,9 @@ It also works on Canvas pages that have a Panopto video embedded in them.
 The settings page opens automatically after install. You can also right-click the Nova icon and choose **Options**.
 
 1. Open a Panopto lecture. Chrome asks **"…panopto.com wants to use your microphone"**. Click **Allow**; you only do this once. Nova listens for "Hey Nova" on the lecture tab while it's open and visible, using Chrome's speech recognition, so no account or key is needed.
-   - *Optional:* for private, on-device detection, open the **Optional: on-device wake word (Picovoice)** section in Nova's settings.
 2. If you missed the prompt or blocked it, click the mic icon in the address bar, choose **Allow**, and reload the lecture.
 3. Pick a **voice** and click **Preview**. The default **Free** engine uses Chrome's own voices and speech recognition, so no key is needed. ElevenLabs is optional (more natural voices) and needs `ELEVENLABS_API_KEY` on the server.
-4. The status should read **Listening for "Hey Nova"**. Now open a lecture and say *"Hey Nova, what did she just say?"* (*"Yo Nova"* works too).
+4. The wake word status should read **Ready: listens on your lecture tab**. Now open a lecture and say *"Hey Nova, what did she just say?"* (*"Yo Nova"* works too).
 
 Voice commands work in natural phrasing ("can you…", "please…") and can be combined with "and"/"then":
 - **Play/pause:** *"can you pause the video"*, *"resume"*, *"keep going"*

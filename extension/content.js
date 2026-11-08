@@ -1224,6 +1224,7 @@
   const currentLanguage = () => SUBTITLE_LANGUAGES.find((l) => l.code === subs.language) || null;
 
   async function initSubtitles() {
+    if (typeof NovaSubtitles === "undefined" || typeof NovaVoice === "undefined") return;
     subs.ui = NovaSubtitles.create({ cssUrl: chrome.runtime.getURL("subtitles.css"), getCardRect: () => overlay.getCardRect() });
     await subs.ui.mount();
     subs.voiceEngine = NovaVoice.create({

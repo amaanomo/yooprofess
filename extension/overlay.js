@@ -645,26 +645,67 @@
     minBtn.addEventListener("click", () => api.minimize());
     launcher.addEventListener("click", () => api.restore());
 
-    // ---- Markdown parser (***bold-italic***, **bold**, *italic*) -------------
+    // ---- Markdown parser ------------------------------------------------------
+    // Blocks: "- " / "• " bullets → <ul>, "1." lines → <ol>, other lines → <p>.
+    // Inline: ***bold-italic***, **bold**, *italic*, `code`. DOM-built, no innerHTML.
+    const BULLET_RE = /^\s*[-•]\s+(.*)$/;
+    const NUMBERED_RE = /^\s*\d+[.)]\s+(.*)$/;
+
     function parseMd(text) {
+      const lines = String(text || "").split("\n");
+      // Plain text (no list lines) keeps the old pre-wrap inline rendering.
+      if (!lines.some((l) => BULLET_RE.test(l) || NUMBERED_RE.test(l))) return parseInline(text);
       const frag = document.createDocumentFragment();
-      const re = /(\*\*\*([^*]+)\*\*\*|\*\*([^*]+)\*\*|\*([^*]+)\*)/g;
+      let list = null; // { kind: "ul"|"ol", el }
+      for (const line of lines) {
+        const b = BULLET_RE.exec(line);
+        const n = b ? null : NUMBERED_RE.exec(line);
+        const kind = b ? "ul" : n ? "ol" : null;
+        if (kind) {
+          if (!list || list.kind !== kind) {
+            list = { kind, el: document.createElement(kind) };
+            list.el.className = "md-list";
+            frag.append(list.el);
+          }
+          const li = document.createElement("li");
+          li.append(parseInline((b || n)[1]));
+          list.el.append(li);
+          continue;
+        }
+        list = null;
+        if (!line.trim()) continue;
+        const p = document.createElement("p");
+        p.className = "md-p";
+        p.append(parseInline(line));
+        frag.append(p);
+      }
+      return frag;
+    }
+
+    function parseInline(text) {
+      const frag = document.createDocumentFragment();
+      const re = /(`([^`]+)`|\*\*\*([^*]+)\*\*\*|\*\*([^*]+)\*\*|\*([^*]+)\*)/g;
       let last = 0, m;
       while ((m = re.exec(text)) !== null) {
         if (m.index > last) frag.append(document.createTextNode(text.slice(last, m.index)));
         if (m[2] !== undefined) {
-          const strong = document.createElement("strong");
-          const em = document.createElement("em");
-          em.textContent = m[2];
-          strong.append(em);
-          frag.append(strong);
+          const code = document.createElement("code");
+          code.className = "md-code";
+          code.textContent = m[2];
+          frag.append(code);
         } else if (m[3] !== undefined) {
           const strong = document.createElement("strong");
-          strong.textContent = m[3];
+          const em = document.createElement("em");
+          em.textContent = m[3];
+          strong.append(em);
           frag.append(strong);
         } else if (m[4] !== undefined) {
+          const strong = document.createElement("strong");
+          strong.textContent = m[4];
+          frag.append(strong);
+        } else if (m[5] !== undefined) {
           const em = document.createElement("em");
-          em.textContent = m[4];
+          em.textContent = m[5];
           frag.append(em);
         }
         last = m.index + m[0].length;
@@ -689,7 +730,13 @@
         bubble.append(
           h(
             "button",
-            { class: `watch-btn${top ? " watch-btn--top" : ""}`, type: "button", onclick: () => o.onSeek(start) },
+            {
+              class: `watch-btn${top ? " watch-btn--top" : ""}`,
+              type: "button",
+              title: `Jump to ${fmt(start)}`,
+              "aria-label": `Jump to ${timeStr}${label ? `, ${label}` : ""}`,
+              onclick: () => o.onSeek(start),
+            },
             icon("play", "watch-play-icon"),
             h("span", { class: "watch-btn-time", text: timeStr }),
             label ? h("span", { class: "watch-btn-label", text: label }) : null,

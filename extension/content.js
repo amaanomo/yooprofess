@@ -642,15 +642,73 @@
    */
   function seekTo(seconds) {
     const v = state.video;
-    if (!v || !v.isConnected || !Number.isFinite(seconds)) return;
+    if (!v || !v.isConnected || !Number.isFinite(seconds)) {
+      warn("Jump ignored:", !v ? "no video" : !v.isConnected ? "video left the page" : `bad time ${seconds}`);
+      return;
+    }
     const target = Math.max(0, Number.isFinite(v.duration) ? Math.min(seconds, v.duration) : seconds);
+    const from = v.currentTime;
     // A refresh still running means the student is really "paused" (it's just the blip).
     const paused = Boolean(refreshMute) || !isPlaying();
     if (refreshMute) cancelRefresh(); // the newer jump wins
     // While paused, Panopto doesn't redraw: start a hair early so the refresh blip ends on target.
     setVideoTime(paused ? Math.max(0, target - REFRESH_BLIP_MS / 1000) : target);
     if (paused) refreshWhilePaused(target);
+    guardSeek(from, target);
+    traceSeek(from, target, paused);
     return target;
+  }
+
+  /** Diagnostics: log where every recording is right after a jump and a few seconds later. */
+  function traceSeek(from, target, paused) {
+    const snap = () =>
+      allVideos()
+        .map((x) => `${x.id ? "#" + x.id : "video"}=${formatTime(x.currentTime)}${x.paused ? " (paused)" : ""}${x.seeking ? " (seeking)" : ""}`)
+        .join(", ");
+    log(`Jump ${formatTime(from)} -> ${formatTime(target)} (${paused ? "paused" : "playing"}); now: ${snap()}`);
+    for (const ms of [500, 1500, 4000, 8000]) setTimeout(() => log(`Jump +${ms / 1000}s: ${snap()}`), ms);
+  }
+
+  /**
+   * Panopto's player keeps its own idea of the position, and right after we set
+   * video.currentTime it can pull the video back to where the student was
+   * (seen on jumps backwards). For a few seconds after a jump, if the video
+   * lands back near the old spot, re-apply the jump. Only that snap-back is
+   * corrected, so a seek the student makes themselves is never fought.
+   */
+  const SEEK_GUARD_MS = 3000;
+  const SEEK_GUARD_RETRIES = 4;
+  let seekGuardRequest = 0;
+
+  function guardSeek(from, target) {
+    const v = state.video;
+    if (!v || !Number.isFinite(from) || Math.abs(from - target) < 3) return; // too close to tell apart
+    const request = ++seekGuardRequest;
+    const startedAt = Date.now();
+    let retries = 0;
+    const check = () => {
+      if (request !== seekGuardRequest || state.video !== v) return stop();
+      if (Date.now() - startedAt > SEEK_GUARD_MS) return stop();
+      const now = v.currentTime;
+      // Snapped back: at the old spot again (Panopto may have kept playing from it), not near the target.
+      const elapsed = (Date.now() - startedAt) / 1000;
+      const nearOld = now >= from - 1.5 && now <= from + elapsed + 1.5;
+      if (nearOld && Math.abs(now - target) > elapsed + 2) {
+        if (retries++ >= SEEK_GUARD_RETRIES) {
+          warn(`Panopto keeps moving the video back to ${formatTime(now)}; jump to ${formatTime(target)} didn't stick`);
+          return stop();
+        }
+        log(`Panopto moved the video back to ${formatTime(now)}; re-applying jump to ${formatTime(target)}`);
+        setVideoTime(v.paused ? target : target + elapsed);
+      }
+    };
+    const timer = setInterval(check, 150);
+    const events = ["seeked", "timeupdate", "playing"];
+    for (const type of events) v.addEventListener(type, check);
+    function stop() {
+      clearInterval(timer);
+      for (const type of events) v.removeEventListener(type, check);
+    }
   }
 
   /** Set both recordings' position (no redraw while paused; see refreshWhilePaused). */

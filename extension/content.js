@@ -1283,7 +1283,11 @@
 
   async function initSubtitles() {
     if (typeof NovaSubtitles === "undefined" || typeof NovaVoice === "undefined") return;
-    subs.ui = NovaSubtitles.create({ cssUrl: chrome.runtime.getURL("subtitles.css"), getCardRect: () => overlay.getCardRect() });
+    subs.ui = NovaSubtitles.create({
+      cssUrl: chrome.runtime.getURL("subtitles.css"),
+      mascotUrl: chrome.runtime.getURL("icons/nova.png"),
+      getCardRect: () => overlay.getCardRect(),
+    });
     await subs.ui.mount();
     subs.voiceEngine = NovaVoice.create({
       getVideos: () => document.querySelectorAll("video"),

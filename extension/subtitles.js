@@ -108,6 +108,7 @@
    * @param {object} o
    * @param {string} o.cssUrl
    * @param {() => DOMRect|null} o.getCardRect  the open Nova card, to keep the pill clear of it
+   * @param {string} [o.mascotUrl]  chrome.runtime.getURL("icons/nova.png"): the same mascot image as the card
    */
   function create(o) {
     const host = document.createElement("nova-subtitles");
@@ -229,6 +230,15 @@
     const api = {
       host,
       async mount() {
+        // Same mascot as the card: use icons/nova.png when it loads, otherwise keep the drawn alien.
+        if (o.mascotUrl) {
+          const img = new Image();
+          img.onload = () => {
+            pill.style.setProperty("--nova-mascot", `url("${o.mascotUrl}")`);
+            pill.classList.add("has-mascot");
+          };
+          img.src = o.mascotUrl;
+        }
         // @property rules inside a shadow root are ignored, so register the sweep angle on the page.
         try {
           CSS.registerProperty({ name: "--nova-a", syntax: "<angle>", inherits: false, initialValue: "0deg" });

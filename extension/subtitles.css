@@ -135,6 +135,19 @@
   display: block;
 }
 
+/* Mascot image (icons/nova.png), like the card's avatar; the drawn alien is the fallback. */
+.pill.has-mascot .face {
+  inset: 0;
+  background-image: var(--nova-mascot);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.pill.has-mascot .face svg {
+  display: none !important; /* the drawn alien sets display inline */
+}
+
 /* Shown while a line is still being translated: a comet orbiting Nova. */
 .orbit-ring {
   position: absolute;

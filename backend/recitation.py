@@ -8,11 +8,15 @@ lecture's most-asked themes, normalize_plan() makes the minutes add up to exactl
 send_email() mails it over SMTP.
 
 The recipient comes ONLY from the environment (NOVA_RECITATION_EMAIL), never from a request,
-so nobody can use this endpoint to mail arbitrary people. SMTP settings (all env vars):
+so nobody can use this endpoint to mail arbitrary people. Two ways to send, both env vars:
 
-    NOVA_SMTP_HOST, NOVA_SMTP_PORT (587 = STARTTLS, 465 = SSL), NOVA_SMTP_USER,
-    NOVA_SMTP_PASSWORD, NOVA_SMTP_FROM (optional, defaults to the user), NOVA_RECITATION_EMAIL
-    (comma-separated for several TAs)
+  1. Brevo email API (HTTPS; works on hosts that block SMTP, like Railway's free/Hobby plans).
+     Used when NOVA_BREVO_API_KEY is set:
+         NOVA_BREVO_API_KEY, NOVA_EMAIL_FROM (a sender address verified in Brevo), NOVA_RECITATION_EMAIL
+  2. SMTP (everywhere else):
+         NOVA_SMTP_HOST, NOVA_SMTP_PORT (587 = STARTTLS, 465 = SSL), NOVA_SMTP_USER,
+         NOVA_SMTP_PASSWORD, NOVA_SMTP_FROM (optional, defaults to the user), NOVA_RECITATION_EMAIL
+  NOVA_RECITATION_EMAIL may hold several comma-separated TA addresses.
 """
 import html
 import json
@@ -20,6 +24,8 @@ import os
 import re
 import smtplib
 import time
+import urllib.error
+import urllib.request
 from email.message import EmailMessage
 
 import topics as hot_topics
@@ -221,8 +227,54 @@ def mask_email(address):
     return f"{name[:1]}***@{domain}"
 
 
+BREVO_URL = "https://api.brevo.com/v3/smtp/email"
+
+
+def brevo_config(env=None):
+    """Brevo settings from the environment, or EmailNotConfigured naming what's missing."""
+    env = os.environ if env is None else env
+    cfg = {
+        "key": env.get("NOVA_BREVO_API_KEY", "").strip(),
+        "sender": (env.get("NOVA_EMAIL_FROM") or env.get("NOVA_SMTP_FROM", "")).strip(),
+        "to": [a.strip() for a in env.get("NOVA_RECITATION_EMAIL", "").split(",") if a.strip()],
+    }
+    missing = [name for name, ok in (("NOVA_EMAIL_FROM", cfg["sender"]), ("NOVA_RECITATION_EMAIL", cfg["to"])) if not ok]
+    if missing:
+        raise EmailNotConfigured("email isn't set up yet: set " + ", ".join(missing))
+    if not _ADDRESS.match(cfg["sender"]) or [a for a in cfg["to"] if not _ADDRESS.match(a)]:
+        raise EmailNotConfigured("NOVA_RECITATION_EMAIL / NOVA_EMAIL_FROM contain an invalid address")
+    return cfg
+
+
+def send_brevo(subject, text, html_body, env=None, opener=urllib.request.urlopen):
+    """Send through Brevo's HTTPS API. Returns the masked recipients."""
+    cfg = brevo_config(env)
+    payload = {
+        "sender": {"name": "Nova", "email": cfg["sender"]},
+        "to": [{"email": a} for a in cfg["to"]],
+        "subject": re.sub(r"[\r\n]+", " ", subject)[:200],
+        "textContent": text,
+        "htmlContent": html_body,
+    }
+    req = urllib.request.Request(
+        BREVO_URL,
+        json.dumps(payload).encode(),
+        {"api-key": cfg["key"], "Content-Type": "application/json", "Accept": "application/json"},
+    )
+    try:
+        with opener(req, timeout=15) as resp:
+            resp.read()
+    except urllib.error.HTTPError as err:
+        print("Brevo rejected the email:", err.code, err.read()[:300])  # the API key is never in this
+        raise
+    return [mask_email(a) for a in cfg["to"]]
+
+
 def send_email(subject, text, html_body, env=None, smtp_ssl=smtplib.SMTP_SSL, smtp=smtplib.SMTP):
-    """Send one message to the configured recipients. Returns the masked recipients."""
+    """Send one message to the configured recipients. Returns the masked recipients.
+    Uses Brevo's HTTPS API when NOVA_BREVO_API_KEY is set, otherwise SMTP."""
+    if (os.environ if env is None else env).get("NOVA_BREVO_API_KEY", "").strip():
+        return send_brevo(subject, text, html_body, env)
     cfg = smtp_config(env)
     msg = EmailMessage()
     msg["Subject"] = re.sub(r"[\r\n]+", " ", subject)[:200]

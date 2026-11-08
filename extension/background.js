@@ -33,12 +33,54 @@ const log = (...args) => console.log("[Nova]", ...args);
 
 async function getSettings() {
   const stored = (await chrome.storage.sync.get(cfg.SETTINGS_KEY))[cfg.SETTINGS_KEY];
-  return { ...cfg.DEFAULT_SETTINGS, ...(stored || {}) };
+  const migrated = cfg.migrateSettings(stored);
+  if (migrated !== stored) {
+    log("Settings migrated: voice engine", stored.voiceEngine, "->", migrated.voiceEngine);
+    await chrome.storage.sync.set({ [cfg.SETTINGS_KEY]: migrated });
+  }
+  return { ...cfg.DEFAULT_SETTINGS, ...(migrated || {}) };
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "sync" && changes[cfg.SETTINGS_KEY]) pushOffscreenConfig();
 });
+
+// ---- Voice engine: "auto" = ElevenLabs when the server has a key, else Chrome ----
+
+const ENGINE_KEY = "elevenStatus"; // session: { ok, at }
+const ENGINE_TTL_MS = { ok: 10 * 60 * 1000, down: 2 * 60 * 1000 };
+
+/** Does the backend have ElevenLabs? Asks /health, cached in session storage. */
+async function elevenAvailable() {
+  const cached = await sessionGet(ENGINE_KEY);
+  if (cached && Date.now() - cached.at < (cached.ok ? ENGINE_TTL_MS.ok : ENGINE_TTL_MS.down)) return cached.ok;
+  const res = await getJSON("/health", 8000);
+  const ok = Boolean(res.ok && res.data && res.data.elevenlabs);
+  await sessionSet(ENGINE_KEY, { ok, at: Date.now() });
+  return ok;
+}
+
+/** "es-ES" / "zh-Hans" -> "es" / "zh"; empty means English. */
+const baseLang = (lang) => String(lang || "en").split("-")[0].toLowerCase() || "en";
+
+/** After an ElevenLabs failure, use Chrome's voice for a couple of minutes. */
+async function markElevenDown() {
+  await sessionSet(ENGINE_KEY, { ok: false, at: Date.now() });
+  pushOffscreenConfig(); // the mic capture path switches too
+}
+
+/** "chrome" | "elevenlabs" for a voiceEngine setting ("auto" | "chrome" | "elevenlabs"). */
+async function resolveEngine(engine) {
+  if (engine === "chrome") return "chrome";
+  if (engine === "elevenlabs") return "elevenlabs";
+  return (await elevenAvailable()) ? "elevenlabs" : "chrome";
+}
+
+/** Settings with voiceEngine resolved to the engine actually in use. ElevenLabs only ever speaks English. */
+async function getVoiceSettings(overrides = {}) {
+  const settings = { ...(await getSettings()), ...overrides };
+  return { ...settings, voiceEngine: await resolveEngine(settings.voiceEngine) };
+}
 
 // ============================================================================
 // Offscreen document (mic + speaker)
@@ -145,7 +187,7 @@ async function toOffscreen(message) {
 }
 
 async function pushOffscreenConfig() {
-  return toOffscreen({ type: "NOVA_OFFSCREEN_CONFIG", settings: await getSettings() });
+  return toOffscreen({ type: "NOVA_OFFSCREEN_CONFIG", settings: await getVoiceSettings() });
 }
 
 chrome.runtime.onStartup.addListener(() => pushOffscreenConfig());
@@ -153,6 +195,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   // Retry the hidden voice page after every install/reload; fall back to the tab again only if needed.
   // "nova:picovoiceKey": left over from the removed Picovoice wake word.
   await chrome.storage.local.remove(["nova:listenerMode", "nova:picovoiceKey"]);
+  await getSettings(); // migrates old saved settings (voice engine "chrome" -> "auto")
   pushOffscreenConfig();
   chrome.alarms.create("nova-keepalive", { periodInMinutes: 1 });
   if (details.reason === "install") chrome.runtime.openOptionsPage();
@@ -167,10 +210,11 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 });
 
 // ============================================================================
-// Speaking: free engine = chrome.tts here; ElevenLabs engine = offscreen audio
+// Speaking: English with ElevenLabs = streamed offscreen audio (default when the server has a key);
+// other languages, the Chrome engine and the fallback = chrome.tts here
 // ============================================================================
 
-function speakWithChrome(text, settings, onState) {
+function speakWithChrome(text, settings, onState, lang = "") {
   chrome.tts.stop();
   const options = {
     rate: Number(settings.voiceRate) || 1,
@@ -181,7 +225,9 @@ function speakWithChrome(text, settings, onState) {
       if (event.type === "error") log("tts error", event.errorMessage);
     },
   };
-  if (settings.voiceName) options.voiceName = settings.voiceName;
+  const english = baseLang(lang) === "en";
+  if (settings.voiceName && english) options.voiceName = settings.voiceName; // the chosen voice is for English
+  if (lang && !english) options.lang = lang; // Chrome picks a voice for that language
   onState("speaking"); // show "Speaking…" right away; "start" confirms it
   chrome.tts.speak(text, options, () => {
     if (chrome.runtime.lastError) {
@@ -192,15 +238,22 @@ function speakWithChrome(text, settings, onState) {
   return { ok: true };
 }
 
-async function speak(text, overrides = {}) {
-  const settings = { ...(await getSettings()), ...overrides };
+/** lang: BCP-47 language of the text ("es-ES"); empty = English. */
+async function speak(text, overrides = {}, lang = "") {
+  const settings = await getVoiceSettings(overrides);
   const clean = String(text || "").trim();
   if (!clean) return { ok: false, error: "empty" };
-  if (settings.voiceEngine === "elevenlabs") {
+  const onState = (state) => forwardToVoiceTarget({ type: "NOVA_VOICE_STATE", state });
+  // ElevenLabs for English; other languages (answers in the subtitle language) use Chrome's voice for that language.
+  if (settings.voiceEngine === "elevenlabs" && baseLang(lang) === "en") {
     chrome.tts.stop();
-    return toOffscreen({ type: "NOVA_PLAY_TTS", text: clean, voiceId: settings.voiceId });
+    const res = await toOffscreen({ type: "NOVA_PLAY_TTS", text: clean, voiceId: settings.voiceId });
+    if (res && (res.ok || res.error === "superseded")) return res;
+    log("ElevenLabs voice failed, using Chrome's", res && res.error);
+    await markElevenDown();
+    return { ...speakWithChrome(clean, settings, onState, lang), fallback: true };
   }
-  return speakWithChrome(clean, settings, (state) => forwardToVoiceTarget({ type: "NOVA_VOICE_STATE", state }));
+  return speakWithChrome(clean, settings, onState, lang);
 }
 
 function stopSpeaking() {
@@ -398,18 +451,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return reply(
         (async () => {
           if (fromTab) await sessionSet("voiceTarget", fromTab);
-          return speak(msg.text);
+          return speak(msg.text, {}, msg.lang || "");
         })()
       );
     case "NOVA_STOP_SPEAKING":
       return reply(stopSpeaking());
+    case "NOVA_GET_VOICE_ENGINE": // whiteboard: which voice to use for English lessons
+      return reply(
+        getVoiceSettings().then((s) => ({
+          ok: true,
+          engine: s.voiceEngine,
+          voiceId: s.voiceId || "",
+          backendUrl: cfg.BACKEND_URL,
+        }))
+      );
+    case "NOVA_ELEVEN_FAILED": // a page's ElevenLabs playback failed: Chrome voices for a while
+      return reply(markElevenDown().then(() => ({ ok: true })));
 
     // ---- options page
     case "NOVA_GET_STATUS":
       return reply(
         (async () => {
+          await sessionSet(ENGINE_KEY, null); // the settings page re-checks the server
           await pushOffscreenConfig();
-          return (await sessionGet("wakeStatus")) || { wake: "unknown" };
+          const status = (await sessionGet("wakeStatus")) || { wake: "unknown" };
+          return { ...status, elevenlabs: await elevenAvailable() };
         })()
       );
     case "NOVA_PEEK_STATUS": // read-only, for polling
@@ -418,11 +484,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // Preview what's selected on the settings page, even before it's saved.
       const overrides = {};
       for (const k of ["voiceEngine", "voiceName", "voiceRate", "voiceId"]) if (msg[k] !== undefined) overrides[k] = msg[k];
-      if ((overrides.voiceEngine || "") !== "elevenlabs") {
-        // No tab is listening for state here; just speak.
-        return reply(getSettings().then((s) => speakWithChrome(String(msg.text || ""), { ...s, ...overrides }, () => {})));
-      }
-      return reply(speak(msg.text, overrides));
+      return reply(
+        getVoiceSettings(overrides).then((s) => {
+          // No tab is listening for state here; just speak.
+          if (s.voiceEngine !== "elevenlabs") return speakWithChrome(String(msg.text || ""), s, () => {});
+          return speak(msg.text, { ...overrides, voiceEngine: "elevenlabs" });
+        })
+      );
     }
     case "NOVA_GET_VOICES":
       return reply(getJSON("/voices", 15000));

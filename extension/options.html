@@ -53,8 +53,9 @@
         <label class="field">
           <span>Voice engine</span>
           <select id="engine-select">
+            <option value="auto">Auto: ElevenLabs when the server has it, otherwise Chrome (recommended)</option>
+            <option value="elevenlabs">ElevenLabs only (needs ELEVENLABS_API_KEY on the server)</option>
             <option value="chrome">Free: built into Chrome (no key needed)</option>
-            <option value="elevenlabs">ElevenLabs: more natural (needs ELEVENLABS_API_KEY on the server)</option>
           </select>
           <small id="engine-hint"></small>
         </label>
@@ -76,7 +77,7 @@
         </label>
       </section>
 
-      <p class="footer">"Hey Nova" detection runs on this computer. Your question (the audio after the wake word) is transcribed by Chrome's speech service (free engine) or ElevenLabs. Chrome shows a microphone indicator while Nova is listening.</p>
+      <p class="footer">"Hey Nova" detection runs on this computer. Your question (the audio after the wake word) is transcribed by ElevenLabs (through the Nova server) or, as a fallback, Chrome's speech service. Chrome shows a microphone indicator while Nova is listening.</p>
     </main>
     <script src="config.js"></script>
     <script src="options.js"></script>

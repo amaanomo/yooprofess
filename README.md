@@ -48,7 +48,7 @@ The dashboard is a one-on-one lesson with Professor Nova:
 The dashboard opens already knowing the concept, the lecture, and the timestamp the student came from, so there's nothing to re-explain.
 
 ### Later
-- **Voice mode** ✅ first version: say "Hey Nova" on a lecture (Chrome speech recognition), with free Chrome voices and speech recognition (ElevenLabs optional), interrupting mid-sentence, and voice video control ("go back 30 seconds", "where did he cover X?"). Still to come: whiteboard drawing synced to speech.
+- **Voice mode** ✅ first version: say "Hey Nova" on a lecture (Chrome speech recognition), spoken with an ElevenLabs voice in English (Scribe v2 for speech-to-text, streamed replies) and free Chrome voices for other languages and as the automatic fallback, interrupting mid-sentence, and voice video control ("go back 30 seconds", "where did he cover X?"). Still to come: whiteboard drawing synced to speech.
 - **Shared whiteboard.** Students can draw on the board too, so Nova can react to their sketches.
 - **Code sandbox** for running and modifying examples during CS lectures.
 - **Quizzes and mastery tracking**, generated from lecture content.

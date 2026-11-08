@@ -8,7 +8,7 @@ import Whiteboard from './components/Whiteboard.jsx'
 import Footer from './components/Footer.jsx'
 import { sendToBackground } from './lib/chromeBridge.js'
 import { renderUpTo } from './lib/drawShapes.js'
-import { hasVoice, speak, stopSpeech } from './lib/tts.js'
+import { hasVoice, prefetch, setLanguage, speak, stopSpeech } from './lib/tts.js'
 
 function readPref(key) {
   try { return localStorage.getItem(key) } catch (_) { return null }
@@ -104,6 +104,8 @@ export default function App() {
       return
     }
 
+    const next = stepsRef.current[indexRef.current + 1]
+    if (next) prefetch(next.say)
     speak(text, {
       onStart: () => { if (id === narrIdRef.current) setTalking(true) },
       onEnd: () => {
@@ -288,6 +290,7 @@ export default function App() {
         return
       }
       ctxRef.current = ctx
+      setLanguage(ctx.speech_lang) // lessons follow the lecture's subtitle language
       planKeyRef.current = 'nova:plan:' + key
       setQuestion(ctx.question ? `You asked: ${ctx.question}` : '')
       loadPlan()

@@ -18,7 +18,8 @@ extension/
 ├── subtitles.css       the subtitle pill's styles
 ├── spotter.js          "Hey Nova" listener that runs in the lecture tab (Chrome speech recognition)
 ├── voice-client.js     "Hey Nova" glue for content.js (wake, live transcript, speak); global NovaVoiceClient
-├── offscreen.html/js   hidden page for the optional ElevenLabs engine (mic capture + audio)
+├── offscreen.html/js   hidden page for the ElevenLabs engine (mic capture + audio)
+├── eleven-audio.js     ElevenLabs MP3 player (streams /tts/stream), shared by offscreen and the whiteboard
 ├── audio-processor.js  AudioWorklet: mic -> 16 kHz Int16 frames (silence detection)
 ├── options.html/js/css settings: mic permission, wake word status, voice picker
 ├── listener.html       fallback pinned tab that runs offscreen.js if Chrome blocks it offscreen
@@ -29,7 +30,7 @@ extension/
 
 ### Voice flow
 
-`spotter.js` hears "Hey Nova" in the lecture tab itself (Chrome's speech recognition is unreliable in hidden pages) and hands the question to `content.js`. `content.js` registers its lecture frame with `background.js` (re-injected if the tab predates an extension reload), so the toolbar button and voice messages land there. Tabs without a Panopto lecture are ignored. The overlay pops up while Chrome's speech recognition (or ElevenLabs via `POST /transcribe`) turns the question into text. The tab then either runs a local video command or calls `/ask`. The answer is spoken with `chrome.tts` (free) or ElevenLabs `POST /tts`. Saying "Hey Nova" again stops it mid-sentence.
+`spotter.js` hears "Hey Nova" in the lecture tab itself (Chrome's speech recognition is unreliable in hidden pages) and hands the question to `content.js`. `content.js` registers its lecture frame with `background.js` (re-injected if the tab predates an extension reload), so the toolbar button and voice messages land there. Tabs without a Panopto lecture are ignored. The overlay pops up while Chrome's speech recognition (or ElevenLabs via `POST /transcribe`) turns the question into text. The tab then either runs a local video command or calls `/ask`. English answers are spoken with ElevenLabs `POST /tts/stream` (default when the server has a key, "auto" engine); answers in another subtitle language, the Chrome engine and the fallback use `chrome.tts`. Whiteboard lessons (`explain-app/src/lib/tts.js`) work the same way: ElevenLabs for English, the browser voice for other languages. Translated-subtitle dubbing (`voice.js`) always uses browser voices. Saying "Hey Nova" again stops it mid-sentence.
 
 Wake word: Chrome's speech recognition runs continuously in the lecture tab while it's visible, and `spotter.js` fuzzy-matches "hey nova" in the text, so "Hey Nova, what's X?" works in one breath. If Chrome accepts a session but never starts it, a watchdog retries with a fresh recognizer (falling back to Chrome's default mic). If Chrome refuses speech recognition in the offscreen document, `background.js` switches to `listener.html`, a pinned tab that runs the same `offscreen.js`.
 

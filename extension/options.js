@@ -38,7 +38,7 @@
 
   async function loadSettings() {
     const stored = (await chrome.storage.sync.get(cfg.SETTINGS_KEY))[cfg.SETTINGS_KEY];
-    settings = { ...cfg.DEFAULT_SETTINGS, ...(stored || {}) };
+    settings = { ...cfg.DEFAULT_SETTINGS, ...(cfg.migrateSettings(stored) || {}) };
     els.wakeEnabled.checked = settings.wakeWordEnabled;
     els.voiceReplies.checked = settings.voiceReplies;
     els.pauseVideo.checked = settings.pauseVideoOnWake;
@@ -175,16 +175,34 @@
     return elevenVoices;
   }
 
+  /** The engine actually in use: "auto" becomes ElevenLabs when the server has a key. */
+  let activeEngine = "chrome";
+  async function effectiveEngine() {
+    const chosen = ["auto", "chrome", "elevenlabs"].includes(settings.voiceEngine) ? settings.voiceEngine : "auto";
+    if (chosen !== "auto") return { chosen, engine: chosen };
+    let res = null;
+    try {
+      res = await chrome.runtime.sendMessage({ type: "NOVA_GET_VOICE_ENGINE" });
+    } catch (_) {
+      /* ignore */
+    }
+    return { chosen, engine: res && res.engine === "elevenlabs" ? "elevenlabs" : "chrome" };
+  }
+
   async function renderVoices() {
-    const engine = settings.voiceEngine === "elevenlabs" ? "elevenlabs" : "chrome";
-    els.engineSelect.value = engine;
+    const { chosen, engine } = await effectiveEngine();
+    activeEngine = engine;
+    els.engineSelect.value = chosen;
     els.voiceSelect.replaceChildren();
     els.rateField.hidden = engine !== "chrome";
     els.rate.value = settings.voiceRate;
     els.rateValue.textContent = `${Number(settings.voiceRate).toFixed(2)}×`;
 
     if (engine === "chrome") {
-      els.engineHint.textContent = "Free. Uses Chrome's voices and Chrome's speech recognition.";
+      els.engineHint.textContent =
+        chosen === "auto"
+          ? "The Nova server doesn't have ElevenLabs set up, so Nova is using Chrome's free voices and speech recognition."
+          : "Free. Uses Chrome's voices and Chrome's speech recognition.";
       els.voiceSelect.append(option("", "Chrome default"));
       const voices = await chromeVoices();
       for (const v of voices) els.voiceSelect.append(option(v.voiceName, `${v.voiceName}${v.lang ? ` (${v.lang})` : ""}${v.remote ? "" : " · offline"}`));
@@ -193,7 +211,9 @@
       return;
     }
 
-    els.engineHint.textContent = "Uses ElevenLabs for both listening and speaking, through the Nova server.";
+    els.engineHint.textContent =
+      "ElevenLabs is Nova's English voice (answers and whiteboard lessons) and transcribes your questions. Other languages use Chrome's voices." +
+      (chosen === "auto" ? " If it's unavailable, Nova switches to Chrome's voices automatically." : "");
     els.voiceSelect.append(option("", "Server default"));
     try {
       const voices = await loadElevenVoices();
@@ -202,7 +222,7 @@
         els.voiceSelect.append(option(v.voice_id, labels ? `${v.name} (${labels})` : v.name));
       }
       els.voiceSelect.value = voices.some((v) => v.voice_id === settings.voiceId) ? settings.voiceId : "";
-      els.voiceHint.textContent = `${voices.length} voices from ElevenLabs.`;
+      els.voiceHint.textContent = `${voices.length} built-in ElevenLabs voices for English. Other languages use Chrome's voices.`;
     } catch (err) {
       els.voiceHint.textContent = `Couldn't load ElevenLabs voices (${err.message}). Set ELEVENLABS_API_KEY on the server, or use the free engine.`;
     }
@@ -213,14 +233,14 @@
     renderVoices();
   });
   els.voiceSelect.addEventListener("change", () =>
-    saveSettings(settings.voiceEngine === "elevenlabs" ? { voiceId: els.voiceSelect.value } : { voiceName: els.voiceSelect.value })
+    saveSettings(activeEngine === "elevenlabs" ? { voiceId: els.voiceSelect.value } : { voiceName: els.voiceSelect.value })
   );
   els.rate.addEventListener("input", () => (els.rateValue.textContent = `${Number(els.rate.value).toFixed(2)}×`));
   els.rate.addEventListener("change", () => saveSettings({ voiceRate: Number(els.rate.value) }));
   els.voicePreview.addEventListener("click", async () => {
     els.voicePreview.disabled = true;
     try {
-      const eleven = settings.voiceEngine === "elevenlabs";
+      const eleven = activeEngine === "elevenlabs";
       const res = await chrome.runtime.sendMessage({
         type: "NOVA_PREVIEW_VOICE",
         text: PREVIEW_TEXT,

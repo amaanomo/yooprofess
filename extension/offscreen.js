@@ -9,7 +9,7 @@
  *   2. Capture: after the wake word (or a mic-button press), turns the question
  *      into text. Free engine (default): Chrome's built-in speech recognition.
  *      ElevenLabs engine: records until silence, POSTs to <backend>/transcribe.
- *   3. Speech (ElevenLabs engine only): plays <backend>/tts audio. The free engine
+ *   3. Speech (ElevenLabs engine only): streams <backend>/tts/stream audio (eleven-audio.js). The free engine
  *      speaks with chrome.tts from background.js. "Hey Nova" mid-reply stops either.
  *
  * The same file also runs in listener.html, a pinned tab that background.js opens
@@ -42,10 +42,9 @@
     node: null,
     noiseFloor: 0.01,
     capture: null, // { recorder, chunks, startedAt, speechMs, lastVoiceAt, heardSpeech, timer }
-    audio: null, // HTMLAudioElement currently speaking
-    audioUrl: null,
+    player: null, // NovaElevenAudio player currently speaking
     ttsToken: 0,
-    ttsPending: false, // fetching /tts audio
+    ttsPending: false, // waiting for the first /tts/stream audio
     status: { wake: "off", detail: "" },
     spot: {
       // Chrome speech-recognition wake-word spotter
@@ -610,7 +609,12 @@
     } catch (err) {
       warn("transcribe failed", err);
       voiceState("idle");
-      send("NOVA_TRANSCRIPT", { text: "", reason: "error", error: String(err.message || err) });
+      send("NOVA_ELEVEN_FAILED"); // background switches to Chrome speech recognition for a while
+      send("NOVA_TRANSCRIPT", {
+        text: "",
+        reason: "error",
+        error: "ElevenLabs couldn't transcribe that, so Nova switched to Chrome's speech recognition. Please ask again.",
+      });
     }
   }
 
@@ -622,6 +626,10 @@
     return cfg.BACKEND_URL.replace(/\/+$/, "") + path;
   }
 
+  /**
+   * Speak an English answer through ElevenLabs, streamed so it starts with the first audio chunk.
+   * Resolves once playback starts (or fails), so background.js can fall back to Chrome's voice.
+   */
   async function speak(text, voiceId) {
     stopSpeaking();
     const clean = String(text || "").trim();
@@ -629,53 +637,36 @@
     const token = ++state.ttsToken;
     state.ttsPending = true;
     voiceState("speaking", { loading: true });
-    try {
-      const res = await fetch(backend("/tts"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: clean, voice_id: voiceId || "" }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
-      const blob = await res.blob();
-      if (token !== state.ttsToken) return { ok: false, error: "superseded" };
-      state.ttsPending = false;
-      state.audioUrl = URL.createObjectURL(blob);
-      const audio = new Audio(state.audioUrl);
-      state.audio = audio;
-      audio.onended = audio.onerror = () => {
-        if (state.audio === audio) {
-          cleanupAudio();
-          voiceState("idle");
-        }
-      };
-      await audio.play();
-      voiceState("speaking");
-      return { ok: true };
-    } catch (err) {
-      warn("tts failed", err);
-      if (token === state.ttsToken) {
-        state.ttsPending = false;
-        cleanupAudio();
-        voiceState("idle", { error: "tts" });
-      }
-      return { ok: false, error: String(err.message || err) };
+    const player = globalThis.NovaElevenAudio.play({
+      url: backend("/tts/stream"),
+      body: { text: clean, voice_id: voiceId || "", language_code: "en" }, // ElevenLabs is English only
+    });
+    state.player = player;
+    const res = await player.started;
+    if (token !== state.ttsToken) return { ok: false, error: "superseded" };
+    state.ttsPending = false;
+    if (!res.ok) {
+      warn("tts failed", res.error);
+      state.player = null;
+      voiceState("idle"); // background.js falls back to Chrome's voice
+      return res;
     }
-  }
-
-  function cleanupAudio() {
-    if (state.audio) state.audio.pause();
-    if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
-    state.audio = state.audioUrl = null;
+    voiceState("speaking");
+    player.done.then(() => {
+      if (state.player === player) {
+        state.player = null;
+        voiceState("idle");
+      }
+    });
+    return { ok: true };
   }
 
   function stopSpeaking() {
-    const wasSpeaking = Boolean(state.audio) || state.ttsPending;
+    const wasSpeaking = Boolean(state.player) || state.ttsPending;
     state.ttsPending = false;
     state.ttsToken++;
-    cleanupAudio();
+    if (state.player) state.player.stop();
+    state.player = null;
     if (wasSpeaking) voiceState("idle");
   }
 

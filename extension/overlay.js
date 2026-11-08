@@ -119,6 +119,7 @@
    * @param {() => void} opts.onDownload
    * @param {() => void} opts.onReloadCaptions
    * @param {() => void} opts.onClearChat
+   * @param {(msg: object) => void} opts.onExplain  "Explain in depth" clicked on an Orbit reply
    */
   function create(opts) {
     const o = Object.assign(
@@ -132,6 +133,7 @@
         onReloadCaptions() {},
         onClearChat() {},
         onSeek() {},
+        onExplain() {},
       },
       opts
     );
@@ -310,6 +312,11 @@
           label ? h("span", { class: "watch-btn-label", text: label }) : null
         );
         bubble.append(watchBtn);
+      }
+      if (role === "orbit" && !msg.error) {
+        bubble.append(
+          h("button", { class: "explain-btn", type: "button", onclick: () => o.onExplain(msg) }, "✎ Explain in depth")
+        );
       }
       const row = h("div", { class: `msg msg--${role}${msg.error ? " msg--error" : ""}` });
       if (role === "orbit") row.append(avatar("sm"));

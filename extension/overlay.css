@@ -385,6 +385,26 @@ button:disabled {
   background: var(--mint-line);
 }
 
+.explain-btn {
+  display: block;
+  margin-top: 8px;
+  padding: 8px 12px;
+  width: 100%;
+  border: 1px solid rgba(46, 107, 87, 0.35);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--green-700);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.explain-btn:hover {
+  background: var(--mint);
+}
+
 .watch-btn-time {
   flex: none;
   font-variant-numeric: tabular-nums;

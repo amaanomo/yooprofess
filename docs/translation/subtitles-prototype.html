@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Orbit Subtitles in Panopto</title>
+<title>Nova Subtitles in Panopto</title>
 <style>
   :root {
     --green: #2e6b57; --green-600: #285e4c; --green-700: #1f4b3d; --lime: #c6e86b; --live: #9be36d;
@@ -68,16 +68,16 @@
   .thumbs div { flex: none; width: 210px; height: 118px; border-radius: 3px; background: linear-gradient(#f4f5f6, #e9ebee); border: 1px solid #ccd; position: relative; }
   .thumbs div::after { content: attr(data-t); position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.6); color: #fff; font-size: 12px; padding: 1px 5px; border-radius: 3px; }
 
-  /* Optional: Orbit's quick toggle inside Panopto's control bar */
-  .orbit-ctl { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 4px; border-radius: 999px; border: 1px solid rgba(46,107,87,.35); background: #f2f8f4; color: var(--green); font: 700 12px system-ui, sans-serif; white-space: nowrap; }
-  .orbit-ctl.off { background: #fff; color: #777; border-color: var(--pano-line); }
+  /* Optional: Nova's quick toggle inside Panopto's control bar */
+  .nova-ctl { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 4px; border-radius: 999px; border: 1px solid rgba(46,107,87,.35); background: #f2f8f4; color: var(--green); font: 700 12px system-ui, sans-serif; white-space: nowrap; }
+  .nova-ctl.off { background: #fff; color: #777; border-color: var(--pano-line); }
   .mini-planet { width: 24px; height: 24px; border-radius: 50%; background: var(--lime); display: grid; place-items: center; flex: none; }
   .mini-planet svg { width: 19px; height: 19px; }
-  .orbit-ctl .pct { font-weight: 600; color: #6c8a7e; }
+  .nova-ctl .pct { font-weight: 600; color: #6c8a7e; }
 
-  /* ================= Orbit subtitles ================= */
+  /* ================= Nova subtitles ================= */
   @property --a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
-  .orbit-sub {
+  .nova-sub {
     position: absolute; bottom: 15%; transform: translateX(-50%); left: 50%;
     width: max-content; display: flex; align-items: center; gap: 12px; padding: 10px 20px 11px 10px; border-radius: 18px;
     background: rgba(20, 52, 42, .86); backdrop-filter: blur(12px) saturate(140%); -webkit-backdrop-filter: blur(12px) saturate(140%);
@@ -85,27 +85,27 @@
     color: #fff; pointer-events: none; transition: bottom .2s ease, left .25s ease;
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
-  .orbit-sub[hidden] { display: none; }
-  .orbit-sub::before {
+  .nova-sub[hidden] { display: none; }
+  .nova-sub::before {
     content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.6px; pointer-events: none;
     background: conic-gradient(from var(--a), transparent 0deg 250deg, rgba(198,232,107,.15) 290deg, var(--lime) 345deg, transparent 360deg);
     -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; opacity: 0;
   }
-  .orbit-sub.arrive::before { animation: sweep 900ms cubic-bezier(.4,.1,.2,1) forwards; }
+  .nova-sub.arrive::before { animation: sweep 900ms cubic-bezier(.4,.1,.2,1) forwards; }
   @keyframes sweep { 0% { --a: 0deg; opacity: 1; } 80% { opacity: 1; } 100% { --a: 360deg; opacity: 0; } }
   .badge { flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; }
   .planet { width: 30px; height: 30px; border-radius: 50%; background: var(--lime); display: grid; place-items: center; box-shadow: 0 0 0 3px rgba(198,232,107,.18); }
   .planet svg { width: 24px; height: 24px; }
   .ring { transform-origin: 12px 12px; }
-  .orbit-sub.pending .ring, .sub-btn.busy .ring { animation: spin 1.1s linear infinite; }
+  .nova-sub.pending .ring, .sub-btn.busy .ring { animation: spin 1.1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .lang { display: flex; align-items: center; gap: 3px; font: 800 9.5px/1 system-ui, sans-serif; letter-spacing: .08em; color: var(--lime); }
   .waves { display: none; align-items: flex-end; gap: 1.5px; height: 9px; }
-  .orbit-sub.voice .waves { display: inline-flex; }
+  .nova-sub.voice .waves { display: inline-flex; }
   .waves i { display: block; width: 2px; height: 3px; border-radius: 1px; background: var(--lime); }
-  .orbit-sub.speaking .waves i { animation: wave .8s ease-in-out infinite; }
-  .orbit-sub.speaking .waves i:nth-child(2) { animation-delay: .15s; }
-  .orbit-sub.speaking .waves i:nth-child(3) { animation-delay: .3s; }
+  .nova-sub.speaking .waves i { animation: wave .8s ease-in-out infinite; }
+  .nova-sub.speaking .waves i:nth-child(2) { animation-delay: .15s; }
+  .nova-sub.speaking .waves i:nth-child(3) { animation-delay: .3s; }
   @keyframes wave { 0%, 100% { height: 3px; } 50% { height: 9px; } }
   .lines { min-width: 0; text-align: left; }
   .original { font-size: clamp(10px, 1.05vw, 13px); line-height: 1.35; color: rgba(255,255,255,.58); font-style: italic; margin-bottom: 3px; }
@@ -119,12 +119,12 @@
   .bars i:nth-child(1) { width: clamp(140px, 18vw, 260px); } .bars i:nth-child(2) { width: clamp(90px, 11vw, 160px); }
   @keyframes sh { to { background-position: -200% 0; } }
 
-  /* ================= Orbit card (same look as the extension) ================= */
-  .orbit { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px; line-height: 1.45; color: var(--ink); }
+  /* ================= Nova card (same look as the extension) ================= */
+  .nova { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px; line-height: 1.45; color: var(--ink); }
   .card { position: fixed; left: 24px; bottom: 24px; z-index: 20; width: min(480px, calc(100vw - 48px)); height: min(80vh, calc(100vh - 48px));
     display: flex; flex-direction: column; background: #fff; border-radius: 20px; overflow: hidden;
     box-shadow: 0 24px 64px rgba(14,38,30,.22), 0 6px 18px rgba(14,38,30,.1), 0 0 0 1px rgba(14,38,30,.06); }
-  .orbit.min .card { display: none; }
+  .nova.min .card { display: none; }
   .header { position: relative; z-index: 3; flex: none; display: flex; align-items: center; gap: 14px; padding: 18px 18px 18px 20px; color: #fff;
     background: var(--green) radial-gradient(rgba(255,255,255,.14) 1.1px, transparent 1.6px) 6px 4px / 22px 22px; }
   .av { flex: none; border-radius: 50%; background: var(--lime); }
@@ -197,7 +197,7 @@
   .send { width: 40px; height: 40px; border: 0; border-radius: 10px; background: var(--bubble); color: #a2aca7; }
   .footer { flex: none; margin: 8px 20px 12px; text-align: center; font-size: 11px; color: var(--muted); }
   .launcher { display: none; position: fixed; left: 24px; bottom: 24px; z-index: 20; width: 60px; height: 60px; border-radius: 50%; border: 3px solid #fff; background: var(--lime); box-shadow: 0 10px 28px rgba(14,38,30,.3); }
-  .orbit.min .launcher { display: block; }
+  .nova.min .launcher { display: block; }
   @media (prefers-reduced-motion: reduce) { *, *::before { animation: none !important; transition: none !important; } .translated .w { opacity: 1; filter: none; transform: none; } }
 </style>
 </head>
@@ -224,7 +224,7 @@
           <div class="arr" id="arr"></div>
         </div>
         <div class="pano-cc" id="panoCC"></div>
-        <div class="orbit-sub" id="orbitSub">
+        <div class="nova-sub" id="novaSub">
           <div class="badge">
             <div class="planet"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.6" fill="#2e6b57"/><g class="ring"><ellipse cx="12" cy="12" rx="10" ry="3.6" fill="none" stroke="#2e6b57" stroke-width="1.6" transform="rotate(-24 12 12)"/></g></svg></div>
             <div class="lang"><span id="langTag">ES</span><span class="waves" aria-hidden="true"><i></i><i></i><i></i></span></div>
@@ -239,7 +239,7 @@
         <span class="time" id="time">0:00</span>
         <div class="track" id="track"><div class="fill" id="fill"></div></div>
         <span class="remain" id="remain">-1:00</span>
-        <button class="orbit-ctl" id="orbitCtl" title="Orbit translated subtitles (quick toggle)">
+        <button class="nova-ctl" id="novaCtl" title="Nova translated subtitles (quick toggle)">
           <span class="mini-planet"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.6" fill="#2e6b57"/><ellipse cx="12" cy="12" rx="10" ry="3.6" fill="none" stroke="#2e6b57" stroke-width="1.6" transform="rotate(-24 12 12)"/></svg></span>
           <span id="ctlLang">ES</span><span class="pct" id="ctlPct"></span>
         </button>
@@ -251,12 +251,12 @@
   </div>
 </div>
 
-<!-- ================= Orbit card ================= -->
-<div class="orbit" id="orbit">
+<!-- ================= Nova card ================= -->
+<div class="nova" id="nova">
   <section class="card" id="card">
     <header class="header">
       <div class="av lg"></div>
-      <div><h2 class="title">Ask Orbit</h2><div class="status" id="status"><span class="dot"></span><span id="statusText">Paused at 0:00</span></div></div>
+      <div><h2 class="title">Ask Nova</h2><div class="status" id="status"><span class="dot"></span><span id="statusText">Paused at 0:00</span></div></div>
       <div class="hdr-actions"><button class="icon-btn" title="More">⋯</button><button class="icon-btn" id="minBtn" title="Minimize">–</button></div>
     </header>
     <div class="context">
@@ -265,7 +265,7 @@
       <button class="sub-btn" id="subBtn" aria-haspopup="true" aria-expanded="false"></button>
       <div class="pop" id="pop" hidden role="dialog" aria-label="Translated subtitles">
         <h4>Translated subtitles</h4>
-        <p class="sub">Orbit translates the captions and shows them over the video.</p>
+        <p class="sub">Nova translates the captions and shows them over the video.</p>
         <div id="langList" role="radiogroup"></div>
         <div class="divider"></div>
         <div class="modes" id="modes">
@@ -281,15 +281,15 @@
       </div>
     </div>
     <div class="messages" id="messages">
-      <div class="msg"><div class="av sm"></div><div class="bubble">Hey! I'm Orbit. I'm following along with this lecture. Ask me anything about what was just said.</div></div>
+      <div class="msg"><div class="av sm"></div><div class="bubble">Hey! I'm Nova. I'm following along with this lecture. Ask me anything about what was just said.</div></div>
       <div class="notice">✓&nbsp; Loaded 214 caption lines</div>
       <div class="notice" id="subNotice" hidden></div>
     </div>
     <div class="chips"><button class="chip">Explain what was just said</button><button class="chip">Give me an example</button><button class="chip">Quiz me on this</button></div>
     <form class="composer" onsubmit="return false"><input placeholder="Ask about what was just said..."><button class="send" type="submit">➤</button></form>
-    <p class="footer">Orbit can make mistakes. Check important details.</p>
+    <p class="footer">Nova can make mistakes. Check important details.</p>
   </section>
-  <button class="launcher" id="launcher" title="Open Orbit"></button>
+  <button class="launcher" id="launcher" title="Open Nova"></button>
 </div>
 
 <script>
@@ -327,7 +327,7 @@ let worker = null;
 
 // ---------- spoken translation (browser's built-in voices) ----------
 let voiceOn = false, lastSpoken = -1, inFlight = 0;
-const DUCK = 0.15; // professor's audio volume while Orbit speaks
+const DUCK = 0.15; // professor's audio volume while Nova speaks
 const BCP = { ES: "es-ES", ZH: "zh-CN", HI: "hi-IN", KO: "ko-KR" };
 const CPS = { ES: 15, ZH: 5, HI: 13, KO: 7 }; // rough characters per second at rate 1.0
 const hasTTS = "speechSynthesis" in window;
@@ -352,11 +352,11 @@ function speakCue(idx) {
   u.onstart = () => sub.classList.add("speaking");
   u.onend = u.onerror = () => { inFlight = Math.max(0, inFlight - 1); if (!inFlight) sub.classList.remove("speaking"); };
   inFlight++; speechSynthesis.speak(u);
-  console.log(`[Orbit voice] ${fmt(cue.s)} ${lang} rate ${rate.toFixed(2)}${v ? " · " + v.name : " · default voice"}: ${text}`);
+  console.log(`[Nova voice] ${fmt(cue.s)} ${lang} rate ${rate.toFixed(2)}${v ? " · " + v.name : " · default voice"}: ${text}`);
 }
 if (hasTTS) speechSynthesis.onvoiceschanged = () => updateUI();
 
-const sub = $("orbitSub"), trans = $("trans"), orig = $("orig"), cc = $("panoCC");
+const sub = $("novaSub"), trans = $("trans"), orig = $("orig"), cc = $("panoCC");
 $("caplist").replaceChildren(...CUES.map((c) => { const d = document.createElement("div"); d.innerHTML = "<span></span><em></em>"; d.firstChild.textContent = c.en; d.lastChild.textContent = fmt(c.s); return d; }));
 
 const pct = (code) => Math.round((done[code].size / CUES.length) * 100);
@@ -419,7 +419,7 @@ function updateUI() {
   if (!lang) pr.innerHTML = "";
   else { const p = pct(lang); pr.innerHTML = `${p === 100 ? "Whole lecture translated" : `Translating… ${p}% of this lecture`}<div class="barwrap"><i style="width:${p}%"></i></div>`; }
 
-  const ctl = $("orbitCtl");
+  const ctl = $("novaCtl");
   ctl.classList.toggle("off", !lang);
   $("ctlLang").textContent = (lang || lastLang) + (voiceOn && lang ? " 🔊" : "");
   $("ctlPct").textContent = busy ? pct(lang) + "%" : "";
@@ -436,10 +436,10 @@ $("voiceSwitch").onclick = () => {
   sub.classList.toggle("voice", voiceOn);
   updateUI(); render();
 };
-$("orbitCtl").onclick = () => setLang(lang ? null : lastLang);
+$("novaCtl").onclick = () => setLang(lang ? null : lastLang);
 $("ccBtn").onclick = () => { ccOn = !ccOn; $("ccBtn").classList.toggle("on", ccOn); render(); };
-$("minBtn").onclick = () => { $("orbit").classList.add("min"); render(); };
-$("launcher").onclick = () => { $("orbit").classList.remove("min"); render(); };
+$("minBtn").onclick = () => { $("nova").classList.add("min"); render(); };
+$("launcher").onclick = () => { $("nova").classList.remove("min"); render(); };
 
 function drawArray(kind) {
   const nums = [3, 8, 15, 23, 42, 51, 67, 74, 88];
@@ -454,11 +454,11 @@ function animateWords(text) {
     w.style.animationDelay = i * (parts.length > 30 ? 12 : 28) + "ms"; trans.append(w); });
 }
 
-// Keep subtitles centered in the part of the video the Orbit card isn't covering.
+// Keep subtitles centered in the part of the video the Nova card isn't covering.
 function placeSubtitles() {
   const screen = $("screen").getBoundingClientRect();
   const card = $("card").getBoundingClientRect();
-  const cardOpen = !$("orbit").classList.contains("min") && card.width > 0;
+  const cardOpen = !$("nova").classList.contains("min") && card.width > 0;
   const left = cardOpen ? Math.max(screen.left, card.right + 16) : screen.left;
   const width = screen.right - left;
   const center = left + width / 2 - screen.left;
@@ -516,7 +516,7 @@ if (q.get("mode")) mode = q.get("mode");
 setLang(q.has("lang") ? (q.get("lang") || null) : "ES");
 if (q.get("voice")) { voiceOn = true; sub.classList.add("voice"); updateUI(); }
 if (q.get("pop")) $("pop").hidden = false;
-if (q.get("min")) $("orbit").classList.add("min");
+if (q.get("min")) $("nova").classList.add("min");
 tick();
 if (q.get("autoplay")) $("play").click();
 </script>

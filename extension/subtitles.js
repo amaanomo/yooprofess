@@ -1,8 +1,8 @@
 /*
- * Orbit: translated-subtitle overlay (UI only).
+ * Nova: translated-subtitle overlay (UI only).
  *
- * Draws Orbit's subtitle pill over Panopto's main video in its own Shadow DOM host
- * (<orbit-subtitles>), separate from the Ask Orbit card, so it keeps showing when
+ * Draws Nova's subtitle pill over Panopto's main video in its own Shadow DOM host
+ * (<nova-subtitles>), separate from the Ask Nova card, so it keeps showing when
  * the card is minimized. It never takes clicks (pointer-events: none).
  *
  * content.js tells it what to show (render) and which card area to avoid; this
@@ -11,7 +11,7 @@
 (function (root) {
   "use strict";
 
-  // Panopto's own caption box. Unverified guesses: Orbit's pill sits 12px above
+  // Panopto's own caption box. Unverified guesses: Nova's pill sits 12px above
   // whichever of these is visible over the video. Add the real selector here.
   const PANOPTO_CAPTION_SELECTORS = [
     ".captions-display",
@@ -28,7 +28,7 @@
   // If captions are drawn on the video itself (a <track> in "showing" mode), stay above them.
   const NATIVE_CAPTION_BOTTOM = 0.15;
   const GAP_ABOVE_CAPTIONS = 12; // px
-  const CARD_GAP = 16; // px between the Orbit card and the pill's usable area
+  const CARD_GAP = 16; // px between the Nova card and the pill's usable area
   const MIN_PILL_WIDTH = 240; // px
   const VIDEO_REPICK_MS = 500;
 
@@ -100,17 +100,17 @@
         shadow.prepend(el("style", null, css));
       }
     } catch (err) {
-      console.warn("[Orbit] Could not load subtitles.css", err);
+      console.warn("[Nova] Could not load subtitles.css", err);
     }
   }
 
   /**
    * @param {object} o
    * @param {string} o.cssUrl
-   * @param {() => DOMRect|null} o.getCardRect  the open Orbit card, to keep the pill clear of it
+   * @param {() => DOMRect|null} o.getCardRect  the open Nova card, to keep the pill clear of it
    */
   function create(o) {
-    const host = document.createElement("orbit-subtitles");
+    const host = document.createElement("nova-subtitles");
     // Not `all: initial !important`: an !important reset would override the position/size we set every frame.
     host.style.cssText = "all: initial;";
     const setHost = (prop, value) => host.style.setProperty(prop, value, "important");
@@ -169,7 +169,7 @@
         host.style.setProperty("--video-w", `${vr.width}px`);
       }
 
-      // Keep clear of the open Orbit card (it sits bottom-left and can cover part of the video).
+      // Keep clear of the open Nova card (it sits bottom-left and can cover part of the video).
       let left = 0;
       const card = o.getCardRect ? o.getCardRect() : null;
       if (card && card.right > vr.left && card.left < vr.right && card.bottom > vr.top && card.top < vr.bottom) {
@@ -228,7 +228,7 @@
       async mount() {
         // @property rules inside a shadow root are ignored, so register the sweep angle on the page.
         try {
-          CSS.registerProperty({ name: "--orbit-a", syntax: "<angle>", inherits: false, initialValue: "0deg" });
+          CSS.registerProperty({ name: "--nova-a", syntax: "<angle>", inherits: false, initialValue: "0deg" });
         } catch (_) {
           /* already registered */
         }
@@ -316,5 +316,5 @@
     return api;
   }
 
-  root.OrbitSubtitles = { create, pickMainVideo, PANOPTO_CAPTION_SELECTORS };
+  root.NovaSubtitles = { create, pickMainVideo, PANOPTO_CAPTION_SELECTORS };
 })(globalThis);

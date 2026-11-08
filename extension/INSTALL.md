@@ -1,6 +1,6 @@
-# Installing Orbit (Chrome developer mode)
+# Installing Nova (Chrome developer mode)
 
-Orbit isn't on the Chrome Web Store yet, so you install it from the code in this repo using Chrome's **developer mode**. It takes about 2 minutes, and you only do it once.
+Nova isn't on the Chrome Web Store yet, so you install it from the code in this repo using Chrome's **developer mode**. It takes about 2 minutes, and you only do it once.
 
 You need Google Chrome. Microsoft Edge and Brave work the same way.
 
@@ -22,7 +22,7 @@ Choose **one** of these:
 git clone https://github.com/amaanomo/yooprofess.git
 ```
 
-⚠️ **Keep this folder where it is.** Chrome loads Orbit straight from it. If you move or delete the folder, Orbit stops working.
+⚠️ **Keep this folder where it is.** Chrome loads Nova straight from it. If you move or delete the folder, Nova stops working.
 
 ---
 
@@ -35,7 +35,7 @@ Three new buttons appear at the top: **Load unpacked**, **Pack extension** and *
 
 ---
 
-## Step 3: Load Orbit
+## Step 3: Load Nova
 
 1. Click **Load unpacked**.
 2. Go into the folder you downloaded and select the **`extension`** folder inside it. It's the folder that contains `manifest.json`.
@@ -43,16 +43,16 @@ Three new buttons appear at the top: **Load unpacked**, **Pack extension** and *
    - ❌ `yooprofess` (one level too high)
 3. Click **Select**. (Windows: **Select Folder**.)
 
-An **"Orbit: Lecture Tutor"** card now appears on the extensions page.
+An **"Nova: Lecture Tutor"** card now appears on the extensions page.
 
 ---
 
-## Step 4: Pin Orbit to the toolbar (optional, recommended)
+## Step 4: Pin Nova to the toolbar (optional, recommended)
 
 1. Click the **puzzle-piece icon** 🧩 to the right of the address bar.
-2. Click the **pin** next to **Orbit: Lecture Tutor**.
+2. Click the **pin** next to **Nova: Lecture Tutor**.
 
-Orbit's icon, a green planet, now stays in your toolbar. Click it to show or hide Orbit on a lecture.
+Nova's icon, a green planet, now stays in your toolbar. Click it to show or hide Nova on a lecture.
 
 ---
 
@@ -61,13 +61,13 @@ Orbit's icon, a green planet, now stays in your toolbar. Click it to show or hid
 1. Sign in to Panopto (for example through UBlearns or Canvas).
 2. Open any recorded lecture. The address should look like
    `https://<school>.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=...`
-3. The **Ask Orbit** card appears in the bottom-left corner, and after a moment it should say **"Loaded N caption lines"**.
+3. The **Ask Nova** card appears in the bottom-left corner, and after a moment it should say **"Loaded N caption lines"**.
 4. Play the video. The header should read **"Following at M:SS"**.
 5. Type a question, or tap one of the suggestion buttons.
 
 It also works on Canvas pages that have a Panopto video embedded in them.
 
-> Right now Orbit runs in **demo (stub) mode**: replies are sample answers, because the AI server isn't connected yet.
+> Right now Nova runs in **demo (stub) mode**: replies are sample answers, because the AI server isn't connected yet.
 
 ---
 
@@ -76,7 +76,7 @@ It also works on Canvas pages that have a Panopto video embedded in them.
 When the code changes:
 
 1. Get the new code: download a fresh ZIP into the **same** folder, or run `git pull`.
-2. Go to `chrome://extensions` and click the **↻ reload** icon on the Orbit card.
+2. Go to `chrome://extensions` and click the **↻ reload** icon on the Nova card.
 3. **Reload any open Panopto tabs.**
 
 ---
@@ -86,17 +86,17 @@ When the code changes:
 | Problem | Fix |
 |---|---|
 | "Manifest file is missing or unreadable" | You picked the wrong folder. Select the `extension` folder, the one that contains `manifest.json`. |
-| Orbit doesn't appear on the lecture | **Reload the Panopto tab.** Tabs that were already open when you installed Orbit don't get it until they're reloaded. Also check that the address contains `panopto.com` and `Viewer.aspx?id=` or `Embed.aspx?id=`. |
+| Nova doesn't appear on the lecture | **Reload the Panopto tab.** Tabs that were already open when you installed Nova don't get it until they're reloaded. Also check that the address contains `panopto.com` and `Viewer.aspx?id=` or `Embed.aspx?id=`. |
 | "You're not signed in to Panopto" | Sign in to Panopto in the same Chrome window, then click **Retry** on the message. |
 | "This lecture doesn't have captions yet" | That recording has no captions. Try a different lecture. |
-| Orbit was there, then disappeared | You may have clicked the toolbar icon, which hides it. Click the icon again. If Orbit is shrunk to a small round button in the corner, click that button to open it. |
-| A red **Errors** button on Orbit's card in `chrome://extensions` | Click it, take a screenshot, and send it to the team. |
-| Orbit stopped working after you moved the folder | Remove Orbit in `chrome://extensions`, then do Step 3 again with the new location. |
+| Nova was there, then disappeared | You may have clicked the toolbar icon, which hides it. Click the icon again. If Nova is shrunk to a small round button in the corner, click that button to open it. |
+| A red **Errors** button on Nova's card in `chrome://extensions` | Click it, take a screenshot, and send it to the team. |
+| Nova stopped working after you moved the folder | Remove Nova in `chrome://extensions`, then do Step 3 again with the new location. |
 
-**Reporting a bug:** on the lecture page, press `Cmd+Option+J` (Mac) or `Ctrl+Shift+J` (Windows) to open the console. Type `[Orbit]` in the filter box and send a screenshot of those lines along with a screenshot of the Orbit card.
+**Reporting a bug:** on the lecture page, press `Cmd+Option+J` (Mac) or `Ctrl+Shift+J` (Windows) to open the console. Type `[Nova]` in the filter box and send a screenshot of those lines along with a screenshot of the Nova card.
 
 ---
 
 ## Uninstalling
 
-Go to `chrome://extensions` and click **Remove** on the Orbit card. You can delete the downloaded folder afterwards.
+Go to `chrome://extensions` and click **Remove** on the Nova card. You can delete the downloaded folder afterwards.

@@ -1,5 +1,5 @@
 /*
- * Orbit: content script.
+ * Nova: content script.
  *
  * Runs in every Panopto Viewer.aspx / Embed.aspx frame (including Canvas iframes),
  * but only does anything in a frame whose URL has a lecture "id". It:
@@ -62,7 +62,7 @@
   /**
    * TODO (unverified): Panopto's caption language numbers for the `language=` parameter
    * of CAPTION_URL, e.g. { es: 1 }. When a lecture has a professor-uploaded translation
-   * in that language, Orbit uses it instead of machine translation. Empty = always use /translate.
+   * in that language, Nova uses it instead of machine translation. Empty = always use /translate.
    */
   const PANOPTO_LANGUAGE_IDS = {};
 
@@ -130,12 +130,12 @@
   // Startup
   // ===========================================================================
 
-  if (window.__orbitContentLoaded) return;
-  window.__orbitContentLoaded = true;
+  if (window.__novaContentLoaded) return;
+  window.__novaContentLoaded = true;
 
-  const log = (...args) => console.log("[Orbit]", ...args);
-  const warn = (...args) => console.warn("[Orbit]", ...args);
-  const { parseSRT, captionWindow, formatTime, parseTimestamp } = globalThis.OrbitSRT;
+  const log = (...args) => console.log("[Nova]", ...args);
+  const warn = (...args) => console.warn("[Nova]", ...args);
+  const { parseSRT, captionWindow, formatTime, parseTimestamp } = globalThis.NovaSRT;
 
   function getLectureId() {
     for (const [key, value] of new URLSearchParams(location.search)) {
@@ -147,7 +147,7 @@
   const initialId = getLectureId();
   if (!initialId) return; // not a lecture frame: do nothing at all
 
-  OrbitOverlay.installKeyGuard();
+  NovaOverlay.installKeyGuard();
 
   const state = {
     lectureId: initialId,
@@ -181,9 +181,9 @@
   }
 
   async function start() {
-    overlay = OrbitOverlay.create({
+    overlay = NovaOverlay.create({
       cssUrl: chrome.runtime.getURL("overlay.css"),
-      mascotUrl: chrome.runtime.getURL("icons/orbit.png"),
+      mascotUrl: chrome.runtime.getURL("icons/nova.png"),
       windowSeconds: CAPTION_WINDOW_SECONDS,
       onSend: (text) => ask(text),
       onDownload: downloadJson,
@@ -201,7 +201,7 @@
     });
 
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-      if (msg && msg.type === "ORBIT_TOGGLE") {
+      if (msg && msg.type === "NOVA_TOGGLE") {
         const visible = overlay.toggleVisible();
         log(visible ? "Overlay shown" : "Overlay hidden");
         sendResponse({ ok: true, visible, lectureId: state.lectureId });
@@ -383,7 +383,7 @@
       overlay.setContextLabel("Captions unavailable: not signed in to Panopto");
       overlay.setNotice({
         kind: "warn",
-        text: "You're not signed in to Panopto, so Orbit can't read the captions. Sign in to Panopto in this browser, then retry.",
+        text: "You're not signed in to Panopto, so Nova can't read the captions. Sign in to Panopto in this browser, then retry.",
         detail,
         ...retry,
       });
@@ -391,7 +391,7 @@
       overlay.setContextLabel("No captions on this lecture");
       overlay.setNotice({
         kind: "info",
-        text: "This lecture doesn't have captions yet, so Orbit can't see what was said. You can still ask general questions.",
+        text: "This lecture doesn't have captions yet, so Nova can't see what was said. You can still ask general questions.",
         detail,
         ...retry,
       });
@@ -403,9 +403,9 @@
 
   async function uploadCaptions(lectureId, stale) {
     const count = state.captions.length.toLocaleString();
-    overlay.setNotice({ kind: "loading", text: `Loaded ${count} caption lines. Sending them to Orbit…` });
+    overlay.setNotice({ kind: "loading", text: `Loaded ${count} caption lines. Sending them to Nova…` });
     const payload = buildLecturePayload({ lectureId, title: state.title, captions: state.captions });
-    const res = await sendToBackground({ type: "ORBIT_UPLOAD_LECTURE", payload });
+    const res = await sendToBackground({ type: "NOVA_UPLOAD_LECTURE", payload });
     if (stale()) return;
 
     if (res.ok) {
@@ -420,7 +420,7 @@
     warn("Could not send captions to the backend:", res.error, res.status || "", res.detail || "");
     overlay.setNotice({
       kind: "warn",
-      text: `Loaded ${count} caption lines, but the Orbit server isn't reachable, so answers may not work yet. You can still download the captions from the ⋯ menu.`,
+      text: `Loaded ${count} caption lines, but the Nova server isn't reachable, so answers may not work yet. You can still download the captions from the ⋯ menu.`,
       detail: res.status ? `Server returned HTTP ${res.status}` : backendErrorText(res),
       actionLabel: "Retry",
       onAction: () => uploadCaptions(state.lectureId, () => lectureId !== state.lectureId),
@@ -550,7 +550,7 @@
     }
   }
 
-  // Extract "Watch: M:SS-M:SS, description" from an Orbit reply.
+  // Extract "Watch: M:SS-M:SS, description" from an Nova reply.
   // Returns { clean: text without watch line, watch: { start, end, label } | null }.
   function parseWatch(text) {
     const match = text.match(/\nWatch:\s*([^\n]+)/i) || text.match(/^Watch:\s*([^\n]+)/im);
@@ -584,7 +584,7 @@
     setBusy(true);
     overlay.showTyping(true);
 
-    const res = await sendToBackground({ type: "ORBIT_ASK", payload });
+    const res = await sendToBackground({ type: "NOVA_ASK", payload });
     if (lectureId !== state.lectureId) return setBusy(false);
     overlay.showTyping(false);
     setBusy(false);
@@ -593,26 +593,26 @@
     if (!reply) {
       warn("/ask failed", res);
       overlay.addMessage({
-        role: "orbit",
+        role: "nova",
         error: true,
         text: res.ok
-          ? "I got an empty answer from the Orbit server. Try asking again."
-          : `I can't reach the Orbit server right now (${backendErrorText(res)}). Try again in a moment.`,
+          ? "I got an empty answer from the Nova server. Try asking again."
+          : `I can't reach the Nova server right now (${backendErrorText(res)}). Try again in a moment.`,
       });
       return;
     }
     const { clean, watch } = parseWatch(reply);
-    const msg = { role: "orbit", text: clean, watch, question, time: payload.current_time, at: Date.now() };
+    const msg = { role: "nova", text: clean, watch, question, time: payload.current_time, at: Date.now() };
     if (res.stub) msg.stub = true;
     saveMessage(msg);
     overlay.addMessage(msg);
     if (chips) overlay.setChips(chips);
   }
 
-  // Opens the whiteboard tab (explain.html) for an Orbit reply.
+  // Opens the whiteboard tab (explain.html) for an Nova reply.
   function explainInDepth(msg) {
     sendToBackground({
-      type: "ORBIT_EXPLAIN_OPEN",
+      type: "NOVA_EXPLAIN_OPEN",
       payload: {
         lecture_id: state.lectureId,
         question: msg.question || "",
@@ -645,16 +645,16 @@
   // Part 5: translated subtitles + spoken translation
   // ===========================================================================
 
-  const SUBTITLE_SETTINGS_KEY = "orbit:subtitles";
-  const translationsKey = (id, code) => `orbit:translations:${id}:${code}`;
+  const SUBTITLE_SETTINGS_KEY = "nova:subtitles";
+  const translationsKey = (id, code) => `nova:translations:${id}:${code}`;
   const shortCode = (code) => String(code).split("-")[0].toUpperCase();
 
   const currentLanguage = () => SUBTITLE_LANGUAGES.find((l) => l.code === subs.language) || null;
 
   async function initSubtitles() {
-    subs.ui = OrbitSubtitles.create({ cssUrl: chrome.runtime.getURL("subtitles.css"), getCardRect: () => overlay.getCardRect() });
+    subs.ui = NovaSubtitles.create({ cssUrl: chrome.runtime.getURL("subtitles.css"), getCardRect: () => overlay.getCardRect() });
     await subs.ui.mount();
-    subs.voiceEngine = OrbitVoice.create({
+    subs.voiceEngine = NovaVoice.create({
       getVideos: () => document.querySelectorAll("video"),
       onSpeaking: (on) => subs.ui.setSpeaking(on),
     });
@@ -696,7 +696,7 @@
     const v = engine.voiceFor(lang.speechLang);
     const audio =
       subs.originalAudio === "lowered"
-        ? `Professor's audio lowered to ${Math.round(OrbitVoice.DUCK_VOLUME * 100)}%.`
+        ? `Professor's audio lowered to ${Math.round(NovaVoice.DUCK_VOLUME * 100)}%.`
         : "Professor's audio is muted.";
     return v
       ? { voiceNote: `Speaking with ${v.name}. ${audio}`, voiceWarn: false, canVoice: true }
@@ -840,13 +840,13 @@
     }
     log(`Translations: ${Object.keys(cache).length}/${cues.length} cached (${lang.code})`);
 
-    subs.translator = OrbitTranslator.create({
+    subs.translator = NovaTranslator.create({
       cues,
       cache,
       getTime: getCurrentTime,
       translateBatch: async (batch) => {
         const payload = buildTranslatePayload({ lectureId, title: state.title, targetLanguage: lang.code, cues: batch });
-        const res = await sendToBackground({ type: "ORBIT_TRANSLATE", payload });
+        const res = await sendToBackground({ type: "NOVA_TRANSLATE", payload });
         if (!res.ok) {
           warn("/translate failed", res.error, res.status || "", res.detail || "");
           return { ok: false };
@@ -895,7 +895,7 @@
       return;
     }
     const t = getCurrentTime();
-    const index = OrbitTranslator.cueIndexAt(state.captions, t);
+    const index = NovaTranslator.cueIndexAt(state.captions, t);
     if (index < 0) {
       subs.ui.render(null);
       return;
@@ -932,7 +932,7 @@
   function backendErrorText(res) {
     if (res.status) return `HTTP ${res.status}`;
     if (res.error === "timeout") return "the request timed out";
-    if (res.error === "extension-reloaded") return "Orbit was updated, reload this page";
+    if (res.error === "extension-reloaded") return "Nova was updated, reload this page";
     return "server unreachable";
   }
 
@@ -942,15 +942,15 @@
       return res || { ok: false, error: "no-response" };
     } catch (err) {
       if (/context invalidated/i.test(String(err && err.message))) {
-        overlay.setNotice({ kind: "warn", text: "Orbit was updated. Reload this page to keep using it." });
+        overlay.setNotice({ kind: "warn", text: "Nova was updated. Reload this page to keep using it." });
         return { ok: false, error: "extension-reloaded" };
       }
       return { ok: false, error: "unreachable", detail: String(err && err.message) };
     }
   }
 
-  const captionsKey = (id) => `orbit:captions:${id}`;
-  const chatKey = (id) => `orbit:chat:${id}`;
+  const captionsKey = (id) => `nova:captions:${id}`;
+  const chatKey = (id) => `nova:chat:${id}`;
 
   async function storageGet(key) {
     try {

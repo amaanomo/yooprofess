@@ -1,5 +1,5 @@
 /*
- * Orbit translated subtitles. Loaded only into the <orbit-subtitles> shadow root.
+ * Nova translated subtitles. Loaded only into the <nova-subtitles> shadow root.
  * The host is sized to the main video; --video-w is its width in px.
  */
 
@@ -17,7 +17,7 @@
   display: none !important;
 }
 
-/* --orbit-a (the sweep angle) is registered from subtitles.js: @property is ignored in shadow roots. */
+/* --nova-a (the sweep angle) is registered from subtitles.js: @property is ignored in shadow roots. */
 
 .pill {
   position: absolute;
@@ -58,7 +58,7 @@
   border-radius: inherit;
   pointer-events: none;
   background: conic-gradient(
-    from var(--orbit-a),
+    from var(--nova-a),
     transparent 0deg 250deg,
     rgba(198, 232, 107, 0.15) 290deg,
     #c6e86b 345deg,
@@ -73,19 +73,19 @@
 }
 
 .pill.arrive::before {
-  animation: orbit-sweep 900ms cubic-bezier(0.4, 0.1, 0.2, 1) forwards;
+  animation: nova-sweep 900ms cubic-bezier(0.4, 0.1, 0.2, 1) forwards;
 }
 
-@keyframes orbit-sweep {
+@keyframes nova-sweep {
   0% {
-    --orbit-a: 0deg;
+    --nova-a: 0deg;
     opacity: 1;
   }
   80% {
     opacity: 1;
   }
   100% {
-    --orbit-a: 360deg;
+    --nova-a: 360deg;
     opacity: 0;
   }
 }
@@ -118,10 +118,10 @@
 }
 
 .pill.pending .ring {
-  animation: orbit-spin 1.1s linear infinite;
+  animation: nova-spin 1.1s linear infinite;
 }
 
-@keyframes orbit-spin {
+@keyframes nova-spin {
   to {
     transform: rotate(360deg);
   }
@@ -136,7 +136,7 @@
   color: #c6e86b;
 }
 
-/* Sound bars: shown in voice mode, animated while Orbit is speaking. */
+/* Sound bars: shown in voice mode, animated while Nova is speaking. */
 .waves {
   display: none;
   align-items: flex-end;
@@ -157,7 +157,7 @@
 }
 
 .pill.speaking .waves i {
-  animation: orbit-wave 0.8s ease-in-out infinite;
+  animation: nova-wave 0.8s ease-in-out infinite;
 }
 
 .pill.speaking .waves i:nth-child(2) {
@@ -168,7 +168,7 @@
   animation-delay: 0.3s;
 }
 
-@keyframes orbit-wave {
+@keyframes nova-wave {
   0%,
   100% {
     height: 3px;
@@ -210,10 +210,10 @@
   opacity: 0;
   filter: blur(5px);
   transform: translateY(5px);
-  animation: orbit-word 380ms ease-out forwards;
+  animation: nova-word 380ms ease-out forwards;
 }
 
-@keyframes orbit-word {
+@keyframes nova-word {
   to {
     opacity: 1;
     filter: blur(0);
@@ -240,7 +240,7 @@
   border-radius: 6px;
   background: linear-gradient(90deg, rgba(255, 255, 255, 0.1), rgba(198, 232, 107, 0.45), rgba(255, 255, 255, 0.1));
   background-size: 200% 100%;
-  animation: orbit-shimmer 1.2s linear infinite;
+  animation: nova-shimmer 1.2s linear infinite;
 }
 
 .bars i:nth-child(1) {
@@ -251,7 +251,7 @@
   width: clamp(80px, calc(var(--video-w, 1000px) * 0.12), 160px);
 }
 
-@keyframes orbit-shimmer {
+@keyframes nova-shimmer {
   to {
     background-position: -200% 0;
   }

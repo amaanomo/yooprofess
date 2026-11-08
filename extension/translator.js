@@ -1,5 +1,5 @@
 /*
- * Orbit: translation scheduler for the subtitle overlay.
+ * Nova: translation scheduler for the subtitle overlay.
  *
  * Decides which caption cues to translate next (starting at the playhead), sends
  * them in batches through a caller-supplied function, retries failures, keeps a
@@ -166,7 +166,7 @@
   }
 
   const api = { create, cueIndexAt, startIndexFor, batchOrder, BATCH_SIZE, CONCURRENCY, LEAD_SECONDS };
-  root.OrbitTranslator = api;
+  root.NovaTranslator = api;
 
   // ---------------------------------------------------------------------------
   // Tests: `node translator.js`. Never runs in the browser.
@@ -288,7 +288,7 @@
         console.log(`  FAIL ${t.name}\n${err.stack}\n`);
       }
     }
-    console.log(`\n[Orbit] translator.js: ${tests.length - failedCount}/${tests.length} tests passed`);
+    console.log(`\n[Nova] translator.js: ${tests.length - failedCount}/${tests.length} tests passed`);
     if (failedCount) process.exitCode = 1;
   }
 })(typeof globalThis !== "undefined" ? globalThis : this);

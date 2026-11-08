@@ -1,4 +1,4 @@
-// Orbit whiteboard tab: fetches a drawing plan from the backend (POST /explain
+// Nova whiteboard tab: fetches a drawing plan from the backend (POST /explain
 // via the background worker) and plays it step by step with narration, a lesson
 // outline, follow-up questions and Simpler / Deeper levels.
 (function () {
@@ -38,7 +38,7 @@
   let narrId = 0; // bumps whenever narration restarts or stops, so stale callbacks do nothing
   let voiceBlocked = false; // Chrome refused speech (no user gesture yet)
   let busy = false;
-  let muted = readPref("orbit:muted") === "1";
+  let muted = readPref("nova:muted") === "1";
 
   // ---- helpers -------------------------------------------------------------
   function readPref(key) {
@@ -322,7 +322,7 @@
   voiceBtn.addEventListener("click", () => {
     muted = !muted;
     voiceBlocked = false;
-    writePref("orbit:muted", muted ? "1" : "0");
+    writePref("nova:muted", muted ? "1" : "0");
     updateVoiceButton();
     if (playing && steps.length) startNarration();
     else stopNarration();
@@ -367,7 +367,7 @@
     stopNarration();
     setBusy(true);
     setStatus(
-      level === "simpler" ? "Making it simpler…" : level === "deeper" ? "Going deeper…" : "Orbit is thinking about how to draw this…"
+      level === "simpler" ? "Making it simpler…" : level === "deeper" ? "Going deeper…" : "Nova is thinking about how to draw this…"
     );
 
     let plan = null;
@@ -377,7 +377,7 @@
     } catch (_) { /* ignore */ }
 
     if (!validPlan(plan)) {
-      const res = await sendToBackground({ type: "ORBIT_EXPLAIN_PLAN", payload: { ...ctx, level } });
+      const res = await sendToBackground({ type: "NOVA_EXPLAIN_PLAN", payload: { ...ctx, level } });
       plan = res.ok ? res.data : null;
       // A single step with no drawing is the server's text-only fallback; don't cache it.
       if (validPlan(plan) && (plan.steps.length > 1 || (plan.steps[0].draw || []).length)) persist(plan);
@@ -392,15 +392,15 @@
         setStatus("");
         bubble.textContent = "Sorry, I couldn't do that right now. Try again in a moment.";
       } else {
-        setStatus("I couldn't reach the Orbit server to draw this. Close this tab and try again in a moment.");
+        setStatus("I couldn't reach the Nova server to draw this. Close this tab and try again in a moment.");
         bubble.textContent = "Sorry, something went wrong.";
       }
       return;
     }
 
     steps = plan.steps;
-    $("title").textContent = plan.title || "Orbit whiteboard";
-    document.title = plan.title ? `${plan.title} · Orbit` : "Orbit whiteboard";
+    $("title").textContent = plan.title || "Nova whiteboard";
+    document.title = plan.title ? `${plan.title} · Nova` : "Nova whiteboard";
     setStatus("");
     buildOutline();
     playing = true;
@@ -427,7 +427,7 @@
     setBusy(true);
     bubble.textContent = "Let me think about that…";
     const res = await sendToBackground({
-      type: "ORBIT_EXPLAIN_PLAN",
+      type: "NOVA_EXPLAIN_PLAN",
       payload: { ...ctx, level, followup: question, lesson: steps.map(({ head, say }) => ({ head, say })) },
     });
     setBusy(false);
@@ -458,7 +458,7 @@
       setStatus("I lost track of what to explain. Go back to the lecture and click “Explain in depth” again.");
       return;
     }
-    planKey = "orbit:plan:" + key;
+    planKey = "nova:plan:" + key;
     $("question").textContent = ctx.question ? `You asked: ${ctx.question}` : "";
     updateLevelButtons();
     loadPlan();

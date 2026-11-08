@@ -1,5 +1,5 @@
 /*
- * Orbit: spoken translation.
+ * Nova: spoken translation.
  *
  * Reads translated caption lines aloud in sync with the video, using the browser's
  * built-in voices (Web Speech API), and turns the professor's audio down while it
@@ -16,7 +16,7 @@
   const MAX_RATE = 1.3; // never speed up past this (before playbackRate)
   const SLOT_PADDING_S = 0.4; // leave a little breathing room at the end of each line
   const DUCK_VOLUME = 0.15; // professor's audio in "lowered" mode
-  /** What happens to the professor's audio while voice is on: "muted" (only Orbit is heard) or "lowered". */
+  /** What happens to the professor's audio while voice is on: "muted" (only Nova is heard) or "lowered". */
   const DEFAULT_ORIGINAL_AUDIO = "muted";
   const MAX_BACKLOG = 2; // speaking + queued lines before we drop the backlog
   /** Rough characters spoken per second at rate 1.0, by language (base code). */
@@ -160,7 +160,7 @@
       },
       isEnabled: () => enabled,
 
-      /** "muted": only Orbit's voice is heard. "lowered": the professor stays audible at 15%. */
+      /** "muted": only Nova's voice is heard. "lowered": the professor stays audible at 15%. */
       setOriginalAudio(mode) {
         const next = mode === "lowered" ? "lowered" : "muted";
         if (next === originalAudio) return;
@@ -201,9 +201,9 @@
             if (!inFlight) setSpeaking(false);
           },
         });
-        const fmt = root.OrbitSRT ? root.OrbitSRT.formatTime : String;
+        const fmt = root.NovaSRT ? root.NovaSRT.formatTime : String;
         console.log(
-          `[Orbit voice] ${fmt(c.start)} ${lang.code.split("-")[0].toUpperCase()} rate ${rate.toFixed(2)} · ${voice ? voice.name : "default voice"}: ${c.text}`
+          `[Nova voice] ${fmt(c.start)} ${lang.code.split("-")[0].toUpperCase()} rate ${rate.toFixed(2)} · ${voice ? voice.name : "default voice"}: ${c.text}`
         );
       },
 
@@ -223,7 +223,7 @@
   }
 
   const api = { create, rateFor, shouldStart, pickVoice, SPEECH_CPS, DUCK_VOLUME, MAX_RATE, DEFAULT_ORIGINAL_AUDIO };
-  root.OrbitVoice = api;
+  root.NovaVoice = api;
 
   // ---------------------------------------------------------------------------
   // Tests: `node voice.js`. Never runs in the browser.
@@ -282,7 +282,7 @@
       const v = create({ provider, getVideos: () => [video] });
       v.setLanguage({ code: "es", speechLang: "es-ES" });
       v.setEnabled(true);
-      assert.equal(video.muted, true); // default: professor muted, only Orbit is heard
+      assert.equal(video.muted, true); // default: professor muted, only Nova is heard
       v.setOriginalAudio("lowered");
       assert.equal(video.muted, false);
       assert.equal(video.volume, 0.15);
@@ -311,7 +311,7 @@
         console.log(`  FAIL ${t.name}\n${err.stack}\n`);
       }
     }
-    console.log(`\n[Orbit] voice.js: ${tests.length - failed}/${tests.length} tests passed`);
+    console.log(`\n[Nova] voice.js: ${tests.length - failed}/${tests.length} tests passed`);
     if (failed) process.exitCode = 1;
   }
 })(typeof globalThis !== "undefined" ? globalThis : this);

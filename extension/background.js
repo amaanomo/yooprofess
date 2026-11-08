@@ -1,7 +1,7 @@
 /*
- * Orbit: background service worker.
+ * Nova: background service worker.
  *
- *  - Toolbar button: tells the content script on the current tab to show/hide Orbit.
+ *  - Toolbar button: tells the content script on the current tab to show/hide Nova.
  *  - Talks to the backend for the content script. Requests from the extension's
  *    service worker aren't subject to the Panopto page's CORS rules, which is why
  *    the content script doesn't call the backend itself.
@@ -26,9 +26,9 @@ const STUB_MODE = false;
 
 const TIMEOUT_MS = { lectures: 20000, ask: 45000, explain: 60000, translate: 60000 };
 
-importScripts("srt.js"); // for OrbitSRT.formatTime in stub replies
+importScripts("srt.js"); // for NovaSRT.formatTime in stub replies
 
-const log = (...args) => console.log("[Orbit]", ...args);
+const log = (...args) => console.log("[Nova]", ...args);
 
 // ============================================================================
 // Toolbar button
@@ -38,10 +38,10 @@ chrome.action.onClicked.addListener((tab) => {
   if (tab.id != null) toggleOverlay(tab.id);
 });
 
-/** Every Orbit frame on the tab gets the message; only lecture frames listen. */
+/** Every Nova frame on the tab gets the message; only lecture frames listen. */
 async function toggleOverlay(tabId) {
   try {
-    const res = await chrome.tabs.sendMessage(tabId, { type: "ORBIT_TOGGLE" });
+    const res = await chrome.tabs.sendMessage(tabId, { type: "NOVA_TOGGLE" });
     log("Toggled overlay", res);
     return res;
   } catch (err) {
@@ -57,28 +57,28 @@ async function toggleOverlay(tabId) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id || !msg || typeof msg.type !== "string") return;
 
-  if (msg.type === "ORBIT_UPLOAD_LECTURE") {
+  if (msg.type === "NOVA_UPLOAD_LECTURE") {
     uploadLecture(msg.payload).then(sendResponse);
     return true; // keep the channel open for the async response
   }
-  if (msg.type === "ORBIT_ASK") {
+  if (msg.type === "NOVA_ASK") {
     askBackend(msg.payload).then(sendResponse);
     return true;
   }
-  if (msg.type === "ORBIT_TRANSLATE") {
+  if (msg.type === "NOVA_TRANSLATE") {
     translateBackend(msg.payload).then(sendResponse);
     return true;
   }
-  if (msg.type === "ORBIT_EXPLAIN_OPEN") {
+  if (msg.type === "NOVA_EXPLAIN_OPEN") {
     // Hand the context to the whiteboard tab through storage, then open it.
-    const key = "orbit:explain:" + Date.now();
+    const key = "nova:explain:" + Date.now();
     chrome.storage.local.set({ [key]: msg.payload }, () => {
       chrome.tabs.create({ url: chrome.runtime.getURL("explain.html") + "?k=" + encodeURIComponent(key) });
       sendResponse({ ok: true });
     });
     return true;
   }
-  if (msg.type === "ORBIT_EXPLAIN_PLAN") {
+  if (msg.type === "NOVA_EXPLAIN_PLAN") {
     postJSON("/explain", msg.payload, TIMEOUT_MS.explain).then(sendResponse);
     return true;
   }
@@ -157,7 +157,7 @@ async function postJSON(path, body, timeoutMs) {
 // ============================================================================
 
 function stubAskReply(payload) {
-  const { formatTime } = self.OrbitSRT;
+  const { formatTime } = self.NovaSRT;
   const context = Array.isArray(payload.context) ? payload.context : [];
   const now = formatTime(payload.current_time);
   const from = formatTime(context.length ? context[0].start : Math.max(0, payload.current_time - 90));

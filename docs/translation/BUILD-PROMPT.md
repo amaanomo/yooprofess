@@ -1,10 +1,10 @@
-# Build prompt: translated subtitles and spoken translation for Orbit
+# Build prompt: translated subtitles and spoken translation for Nova
 
-You are adding **translation** to Orbit, the Chrome extension in this repo (`amaanomo/yooprofess`). A student picks a language and gets three things:
+You are adding **translation** to Nova, the Chrome extension in this repo (`amaanomo/yooprofess`). A student picks a language and gets three things:
 
-1. **Translated subtitles** over the Panopto video, styled so they're clearly Orbit's and not Panopto's auto-captions.
-2. Optional **spoken translation**: Orbit reads the translated lines aloud, synced to the video, with the professor's audio turned down.
-3. **Orbit's chat answers** in that language.
+1. **Translated subtitles** over the Panopto video, styled so they're clearly Nova's and not Panopto's auto-captions.
+2. Optional **spoken translation**: Nova reads the translated lines aloud, synced to the video, with the professor's audio turned down.
+3. **Nova's chat answers** in that language.
 
 Translation works from the **captions (text)**. We never translate the audio directly, and we never imitate the professor's voice.
 
@@ -19,7 +19,7 @@ Translation works from the **captions (text)**. We never translate the audio dir
   - Shadow DOM UI
   - every backend call goes through the service worker
   - request/response shapes in one "Backend contract" section
-  - `[Orbit]` log prefix
+  - `[Nova]` log prefix
   - no build step
 
   Don't rewrite working code; extend it.
@@ -32,7 +32,7 @@ Translation works from the **captions (text)**. We never translate the audio dir
   - **`content.js`** runs in Panopto `Viewer.aspx` / `Embed.aspx` frames (`all_frames`, so it also works inside Canvas iframes), but only when the URL has an `id`. It does the following:
     - fetches captions with the student's session from `CAPTION_URL` (`{origin}/Panopto/Pages/Transcription/GenerateSRT.ashx?id={id}&language=0`)
     - parses them with `srt.js` into `[{start, end, text}]`, in seconds
-    - caches them in `chrome.storage.local` (`orbit:captions:<id>`)
+    - caches them in `chrome.storage.local` (`nova:captions:<id>`)
     - uploads them to `POST /lectures`
     - follows the `<video>` element (a MutationObserver handles late or replaced videos; it prefers `#primaryVideo`)
     - runs the chat (`POST /ask` with the last 90 s of captions)
@@ -40,11 +40,11 @@ Translation works from the **captions (text)**. We never translate the audio dir
 
     All request/response shapes live in its **"Backend contract"** section.
   - **`background.js`** is the service worker. It runs the toolbar toggle and is the only place that talks to the backend. It holds `BACKEND_URL` (the Railway deployment) and `STUB_MODE` (now `false`).
-  - **`overlay.js` / `overlay.css`** contain the "Ask Orbit" card in a Shadow DOM root on `<orbit-overlay>`, fixed bottom-left, 560px wide.
+  - **`overlay.js` / `overlay.css`** contain the "Ask Nova" card in a Shadow DOM root on `<nova-overlay>`, fixed bottom-left, 560px wide.
     - Its parts are a header, a mint "Using the last 90 seconds of captions" strip, the chat, the chips, the input and a footer. It minimizes to a round launcher button.
-    - A capture-phase keyboard guard installed at `document_start` stops Panopto's shortcuts from firing while the student types in Orbit. Because of that guard, Orbit's own key handling (such as Escape) goes through its `onKey` hook.
+    - A capture-phase keyboard guard installed at `document_start` stops Panopto's shortcuts from firing while the student types in Nova. Because of that guard, Nova's own key handling (such as Escape) goes through its `onKey` hook.
   - **`srt.js`** holds pure helpers (`parseSRT`, `captionWindow`, `formatTime`, `parseTimestamp`) with Node tests (`node extension/srt.js`).
-- **`backend/server.py`** is a Python `http.server` app on Railway. It calls Claude through the `anthropic` SDK (`ORBIT_MODEL`, default `claude-sonnet-5-5`) and has CORS headers.
+- **`backend/server.py`** is a Python `http.server` app on Railway. It calls Claude through the `anthropic` SDK (`NOVA_MODEL`, default `claude-sonnet-5-5`) and has CORS headers.
   - `POST /lectures` stores captions in memory (lost on restart).
   - `POST /ask` answers from the full transcript plus full subject knowledge, and ends with a `Watch:` line.
 
@@ -56,11 +56,11 @@ Translation works from the **captions (text)**. We never translate the audio dir
 - **right:** the large **screen/slides** video
 - **under it:** a white control bar (±10 s, time, blue progress bar, remaining time, volume, **CC**, settings), then a thumbnail strip
 
-The Orbit card sits bottom-left over the left column and can overlap the left edge of the main video.
+The Nova card sits bottom-left over the left column and can overlap the left edge of the main video.
 
-## 2. Settings and controls (inside the Orbit card)
+## 2. Settings and controls (inside the Nova card)
 
-All controls live **in the Orbit card**, with no separate floating panel and no new header buttons (the header must keep matching the original mockup).
+All controls live **in the Nova card**, with no separate floating panel and no new header buttons (the header must keep matching the original mockup).
 
 ### 2a. Strip button
 In the mint captions strip, right-aligned: a 30px-tall pill whose look follows the state. The strip's own text truncates with an ellipsis; the button never wraps.
@@ -76,7 +76,7 @@ The **mini-planet** is a lime circle holding a dark-green planet with a tilted r
 ### 2b. Popover
 It opens from the strip button: 286px wide, 14px radius, soft shadow, scaling in from the top right. It's anchored under the strip on the right and sits above the chat. It closes on an outside click or Escape (through the key guard's `onKey`). It contains:
 
-1. **Title** "Translated subtitles", with the line "Orbit translates the captions and shows them over the video."
+1. **Title** "Translated subtitles", with the line "Nova translates the captions and shows them over the video."
 2. **Language radio list:** Off, then `SUBTITLE_LANGUAGES`.
    - Each row shows a small code (`ES`), the native name, and a right-hand state: **On** (active), **Ready** (fully cached), **NN%** (partly translated) or blank.
    - **Picking a language turns subtitles on immediately** and starts translating from the playhead.
@@ -101,26 +101,26 @@ The short code shown in the UI is the uppercase base of `code` (`ES`, `ZH`, ...)
 ### 2c. Other surfaces
 - **Chat notices** (status lines, not saved in history): "Subtitles on in Español." When translating, add "Translating from where you are…". After a reload with voice on, show "Tap to resume spoken translation" with a button (§6).
 - **`⋯` menu:** add a "Subtitles…" item that opens the same popover.
-- **Optional:** add an Orbit pill to **Panopto's control bar**, just left of CC.
+- **Optional:** add an Nova pill to **Panopto's control bar**, just left of CC.
   - It shows the mini-planet, the code, and `🔊` and/or progress (`ES 42%`).
   - Clicking it toggles subtitles on and off, keeping the last language, mode and voice.
   - Use its own shadow host, found with `PANOPTO_CONTROLBAR_SELECTORS` (unverified). Re-insert it if Panopto re-renders the bar, and fail quietly if the bar isn't found.
 
 ### 2d. Persistence
-`chrome.storage.local["orbit:subtitles"] = { language: "es" | null, mode: "translated" | "dual", voice: boolean, lastLanguage }`. It's **global**, so it carries across lectures.
+`chrome.storage.local["nova:subtitles"] = { language: "es" | null, mode: "translated" | "dual", voice: boolean, lastLanguage }`. It's **global**, so it carries across lectures.
 
 ## 3. Getting translations (extension side)
 
 1. **Panopto's own translations first.** Some lectures have professor-uploaded captions in other languages at the same caption URL with a different `language=` number.
    - Keep `PANOPTO_LANGUAGE_IDS` (code → number) in one constant, **marked unverified with a TODO**.
    - Try that URL first. If it parses to cues that line up with the originals, use them (source `"panopto"`). Otherwise fall through quietly.
-2. **Otherwise, use Orbit's backend** (`POST /translate`, §4) through the service worker, with a new message type `ORBIT_TRANSLATE`.
+2. **Otherwise, use Nova's backend** (`POST /translate`, §4) through the service worker, with a new message type `NOVA_TRANSLATE`.
 3. **Scheduler** (pure logic in `extension/translator.js`, testable in Node):
    - **Batches:** about **60 cues** per batch.
    - **Order:** start ~10 s before the playhead, go forward to the end, then fill in the beginning.
    - **On seek** into an untranslated region, that region jumps to the front of the queue.
    - **Concurrency and retries:** at most **2 requests at once**. Retry a failed batch twice with backoff (1 s, 3 s). After that, mark it failed: those lines show as untranslated, and the popover offers "Retry".
-   - **Cache:** `chrome.storage.local["orbit:translations:<lecture_id>:<code>"] = { [i]: text }`. Write it after every batch so progress survives a reload, and translate only missing indexes. Log `[Orbit] Translations: N/M cached` on load.
+   - **Cache:** `chrome.storage.local["nova:translations:<lecture_id>:<code>"] = { [i]: text }`. Write it after every batch so progress survives a reload, and translate only missing indexes. Log `[Nova] Translations: N/M cached` on load.
    - **Progress** is translated cues ÷ total cues.
    - **Switching language or lecture** cancels outstanding work for the old one. Finished batches stay cached.
 4. **STUB_MODE** (in `background.js`): `/translate` returns `"[ES] " + text` for each cue after 600 ms, so the whole flow demos offline.
@@ -154,13 +154,13 @@ The short code shown in the UI is the uppercase base of `code` (`ES`, `ZH`, ...)
 ## 5. Subtitle overlay (`extension/subtitles.js` + `extension/subtitles.css`)
 
 ### Where it goes
-- **Its own Shadow DOM host**, `<orbit-subtitles>`, separate from the card, so subtitles still show when the card is minimized or hidden. It's `pointer-events: none` and never blocks the player.
+- **Its own Shadow DOM host**, `<nova-subtitles>`, separate from the card, so subtitles still show when the card is minimized or hidden. It's `pointer-events: none` and never blocks the player.
 - **Over the main video:** the visible `<video>` with the largest on-screen area, which is normally the slides stream.
   - Re-pick it on ⇄ swap, resize and DOM changes.
-  - This can differ from the video Orbit follows for time; both share the same clock.
+  - This can differ from the video Nova follows for time; both share the same clock.
 - **Positioning:** fixed, using `getBoundingClientRect()`. Update on `resize`, `scroll`, a `ResizeObserver` on the video, and once per animation frame while playing. Touch the DOM only when the rect changes.
 - **Clip to the video rect.** The pill never spills onto the control bar or the left column.
-- **Clear of the Orbit card:** centre the pill in the part of the video the open card doesn't cover, from `max(video.left, card.right + 16px)` to `video.right`, with `max-width` 90% of that span. Use the full width when the card is minimized or hidden, and recompute when the card changes.
+- **Clear of the Nova card:** centre the pill in the part of the video the open card doesn't cover, from `max(video.left, card.right + 16px)` to `video.right`, with `max-width` 90% of that span. Use the full width when the card is minimized or hidden, and recompute when the card changes.
 - **Vertical position:** sit **12px above Panopto's caption box** when it's visible (measure its height, so a two-line caption never overlaps). Use `PANOPTO_CAPTION_SELECTORS`, marked unverified. If no caption box is found, sit 15% up from the video's bottom.
 - **Fullscreen:** on `fullscreenchange`, move the host into `document.fullscreenElement`, and back out afterwards.
 
@@ -173,7 +173,7 @@ The short code shown in the UI is the uppercase base of `code` (`ES`, `ZH`, ...)
 - **Dual:** the original line above, about 70% size, italic, `rgba(255,255,255,.58)`.
 
 ### Motion (all off under `prefers-reduced-motion`)
-- **New line, "orbit sweep":** a lime arc runs once around the border. Use a conic gradient driven by `@property --a` animated 0→360deg over 900 ms `cubic-bezier(.4,.1,.2,1)`, masked to a 1.6px ring, fading out at the end.
+- **New line, "nova sweep":** a lime arc runs once around the border. Use a conic gradient driven by `@property --a` animated 0→360deg over 900 ms `cubic-bezier(.4,.1,.2,1)`, masked to a 1.6px ring, fading out at the end.
 - **Words fade in:** opacity 0→1, blur 5px→0, translateY 5px→0, 380 ms each, staggered 28 ms per word. For CJK, stagger per character at 12 ms, or 12 ms per word for lines over 30 words.
 - **Untranslated line:** two shimmering lime-tinted bars and "Translating…", with the planet ring spinning. In Dual mode the original still shows above.
 - **No cue at the current time:** fade out over 150 ms.
@@ -208,7 +208,7 @@ The short code shown in the UI is the uppercase base of `code` (`ES`, `ZH`, ...)
   - Apply this to videos added later as well.
 - **Visuals:** while speaking, three 2px lime bars next to the language code in the pill animate from 3px to 9px tall, staggered by 0.15 s. They're static under reduced motion.
 - **Chrome's click requirement:** call `speechSynthesis.speak()` once, with an empty utterance, **inside the switch's click handler**. After a reload with voice saved as on, show the "Tap to resume spoken translation" notice; its button does the same.
-- **Logging:** `[Orbit voice] 7:48 ES rate 1.12 · <voice name>: <text>`.
+- **Logging:** `[Nova voice] 7:48 ES rate 1.12 · <voice name>: <text>`.
 
 ## 7. Chat in the chosen language
 
@@ -225,7 +225,7 @@ The short code shown in the UI is the uppercase base of `code` (`ES`, `ZH`, ...)
 - **Edits:**
   - `content.js`: orchestration and the contract.
   - `overlay.js` / `overlay.css`: strip button, popover, notices, `⋯` item.
-  - `background.js`: `ORBIT_TRANSLATE` and its stub.
+  - `background.js`: `NOVA_TRANSLATE` and its stub.
   - `manifest.json`: script order `srt.js, translator.js, voice.js, subtitles.js, overlay.js, content.js`, and `subtitles.css` in `web_accessible_resources`.
   - `backend/server.py`.
 - **Constraints:**
@@ -240,7 +240,7 @@ The short code shown in the UI is the uppercase base of `code` (`ES`, `ZH`, ...)
 
 ## 9. Build order (commit after each)
 
-1. **Contract and backend:** `/translate` and the `/ask` language field in `server.py`, the contract in `content.js`, and `ORBIT_TRANSLATE` with its stub in `background.js`.
+1. **Contract and backend:** `/translate` and the `/ask` language field in `server.py`, the contract in `content.js`, and `NOVA_TRANSLATE` with its stub in `background.js`.
 2. **Translator:** `translator.js` scheduler and cache, with Node tests.
 3. **Controls:** strip button, popover and persistence in the card.
 4. **Overlay:** `subtitles.js` / `.css`, covering positioning, card avoidance, Panopto caption avoidance, fullscreen, the look and the motion.

@@ -1,4 +1,4 @@
-"""Run: python3 -m unittest backend/test_recitation.py  (or cd backend && python3 -m unittest test_recitation)"""
+"""Run from the backend folder:  cd backend && python3 -m unittest test_recitation"""
 import json
 import unittest
 

@@ -190,6 +190,7 @@
       onReloadCaptions: () => loadCaptions({ force: true }),
       onClearChat: clearChat,
       onSeek: seekTo,
+      onExplain: explainInDepth,
       subtitleLanguages: SUBTITLE_LANGUAGES,
       onSubtitleLanguage: (code) => setSubtitleLanguage(code, { announce: true }),
       onSubtitleMode: setSubtitleMode,
@@ -601,11 +602,24 @@
       return;
     }
     const { clean, watch } = parseWatch(reply);
-    const msg = { role: "orbit", text: clean, watch, at: Date.now() };
+    const msg = { role: "orbit", text: clean, watch, question, time: payload.current_time, at: Date.now() };
     if (res.stub) msg.stub = true;
     saveMessage(msg);
     overlay.addMessage(msg);
     if (chips) overlay.setChips(chips);
+  }
+
+  // Opens the whiteboard tab (explain.html) for an Orbit reply.
+  function explainInDepth(msg) {
+    sendToBackground({
+      type: "ORBIT_EXPLAIN_OPEN",
+      payload: {
+        lecture_id: state.lectureId,
+        question: msg.question || "",
+        reply: msg.text,
+        current_time: msg.time || 0,
+      },
+    });
   }
 
   function setBusy(value) {

@@ -24,7 +24,7 @@ const BACKEND_URL = "https://yooprofess-production.up.railway.app";
  */
 const STUB_MODE = false;
 
-const TIMEOUT_MS = { lectures: 20000, ask: 45000, translate: 60000 };
+const TIMEOUT_MS = { lectures: 20000, ask: 45000, explain: 60000, translate: 60000 };
 
 importScripts("srt.js"); // for OrbitSRT.formatTime in stub replies
 
@@ -67,6 +67,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === "ORBIT_TRANSLATE") {
     translateBackend(msg.payload).then(sendResponse);
+    return true;
+  }
+  if (msg.type === "ORBIT_EXPLAIN_OPEN") {
+    // Hand the context to the whiteboard tab through storage, then open it.
+    const key = "orbit:explain:" + Date.now();
+    chrome.storage.local.set({ [key]: msg.payload }, () => {
+      chrome.tabs.create({ url: chrome.runtime.getURL("explain.html") + "?k=" + encodeURIComponent(key) });
+      sendResponse({ ok: true });
+    });
+    return true;
+  }
+  if (msg.type === "ORBIT_EXPLAIN_PLAN") {
+    postJSON("/explain", msg.payload, TIMEOUT_MS.explain).then(sendResponse);
     return true;
   }
 });

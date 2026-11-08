@@ -760,6 +760,7 @@ button:disabled {
   background: var(--mint-line);
 }
 
+
 .watch-btn-time {
   flex: none;
   font-variant-numeric: tabular-nums;

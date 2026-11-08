@@ -61,6 +61,14 @@
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids.flat().filter(Boolean)); return n; };
   let key = "", current = null;
   try { key = sessionStorage.getItem("nova:instructorKey") || ""; } catch (_) {}
+  // Opened from Nova's "Open instructor dashboard": the key arrives in the #fragment (never sent to the
+  // server). Keep it for this tab and remove it from the address bar right away.
+  const fromNova = new URLSearchParams(location.hash.slice(1)).get("key");
+  if (fromNova) {
+    key = fromNova;
+    try { sessionStorage.setItem("nova:instructorKey", key); } catch (_) {}
+    history.replaceState(null, "", location.pathname + location.search);
+  }
 
   async function api(path) {
     const res = await fetch(path, { headers: { "X-Instructor-Key": key } });

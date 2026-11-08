@@ -456,6 +456,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     topicsBackend(msg.payload).then(sendResponse);
     return true;
   }
+  if (msg.type === "NOVA_INSTRUCTOR_CHECK") {
+    // Try a key before saving it: the server answers 401 for a wrong key, 403 if instructor view is off.
+    topicsBackend(msg.payload, msg.key).then(sendResponse);
+    return true;
+  }
+  if (msg.type === "NOVA_OPEN_DASHBOARD") {
+    openInstructorDashboard().then(sendResponse);
+    return true;
+  }
 });
 
 // ============================================================================
@@ -500,7 +509,26 @@ async function summaryBackend(payload) {
   return postJSON("/summary", payload, TIMEOUT_MS.summary);
 }
 
-async function topicsBackend(payload) {
+// ---- Instructor view --------------------------------------------------------------
+// Hot topics is instructor-only. The key lives in chrome.storage.local (this browser only)
+// and goes to the server in the X-Instructor-Key header.
+const INSTRUCTOR_KEY_STORAGE = "nova:instructorKey";
+
+async function getInstructorKey() {
+  return (await chrome.storage.local.get(INSTRUCTOR_KEY_STORAGE))[INSTRUCTOR_KEY_STORAGE] || "";
+}
+
+async function openInstructorDashboard() {
+  const key = await getInstructorKey();
+  // The key rides in the #fragment, which browsers never send to the server; the page removes it at once.
+  const url = cfg.BACKEND_URL.replace(/\/+$/, "") + "/instructor" + (key ? "#key=" + encodeURIComponent(key) : "");
+  await chrome.tabs.create({ url });
+  return { ok: true };
+}
+
+async function topicsBackend(payload, keyOverride) {
+  const key = keyOverride != null ? keyOverride : await getInstructorKey();
+  if (!key) return { ok: false, status: 401, error: "http", data: { error: "instructor key required" } };
   if (STUB_MODE) {
     // Sample themes so the Hot topics view can be demoed offline.
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -521,8 +549,10 @@ async function topicsBackend(payload) {
     };
   }
   log(`POST /topics ${payload.lecture_id}${payload.refresh ? " (refresh)" : ""}`);
-  const res = await postJSON("/topics", payload, TIMEOUT_MS.topics);
-  if (MOCK_TOPICS && (!res.ok || !res.data || res.data.status === "empty")) return mockTopics();
+  const res = await postJSON("/topics", payload, TIMEOUT_MS.topics, { "X-Instructor-Key": key });
+  // Never cover up a refused key with demo data: 401/403 must reach the instructor-view UI.
+  const refused = res.status === 401 || res.status === 403;
+  if (MOCK_TOPICS && !refused && (!res.ok || !res.data || res.data.status === "empty")) return mockTopics();
   return res;
 }
 
@@ -564,8 +594,8 @@ async function translateBackend(payload) {
   return postJSON("/translate", payload, TIMEOUT_MS.translate);
 }
 
-function postJSON(path, body, timeoutMs) {
-  return request(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }, timeoutMs);
+function postJSON(path, body, timeoutMs, headers = {}) {
+  return request(path, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) }, timeoutMs);
 }
 
 function getJSON(path, timeoutMs) {

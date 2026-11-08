@@ -426,8 +426,85 @@ button:disabled {
 }
 
 .card[data-view="topics"] .messages,
-.card[data-view="topics"] .chips {
+.card[data-view="topics"] .chips,
+.card[data-view="instructor"] .messages,
+.card[data-view="instructor"] .chips {
   display: none !important;
+}
+
+/* The instructor login reuses the Hot topics layout but is its own view. */
+.card[data-view="topics"] .topics.instructor {
+  display: none;
+}
+
+.card[data-view="instructor"] .topics.instructor {
+  display: flex;
+}
+
+.instr-body {
+  justify-content: flex-start;
+  padding-top: 20px;
+}
+
+.instr-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--star-soft);
+}
+
+.instr-form {
+  display: flex;
+  gap: 8px;
+}
+
+.instr-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--space-600);
+  border-radius: 10px;
+  outline: 0;
+  background: var(--space-800);
+  color: var(--star);
+  font: inherit;
+  font-size: 14px;
+}
+
+.instr-input:focus {
+  border-color: var(--comet);
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.18);
+}
+
+.instr-unlock {
+  flex: none;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--nebula);
+  color: var(--white);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.instr-unlock:hover:not(:disabled) {
+  background: var(--nebula-600);
+}
+
+.instr-unlock:disabled,
+.instr-input:disabled {
+  opacity: 0.6;
+}
+
+.instr-unlock:focus-visible {
+  outline: 2px solid var(--comet);
+  outline-offset: 2px;
+}
+
+.instr-error {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--error-ink);
 }
 
 .topics-head {

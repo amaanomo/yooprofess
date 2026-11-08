@@ -174,6 +174,9 @@
    * @param {() => void} opts.onStopSpeaking
    * @param {() => void} opts.onOpenTopics  the Hot topics view was opened
    * @param {() => void} opts.onRefreshTopics  "Refresh" pressed in the Hot topics view
+   * @param {(key: string) => void} opts.onInstructorUnlock  instructor key submitted
+   * @param {() => void} opts.onOpenDashboard  "Open instructor dashboard"
+   * @param {() => void} opts.onExitInstructor  "Exit instructor view"
    */
   function create(opts) {
     const o = Object.assign(
@@ -204,6 +207,9 @@
         onLayoutChange() {},
         onOpenTopics() {},
         onRefreshTopics() {},
+        onInstructorUnlock() {},
+        onOpenDashboard() {},
+        onExitInstructor() {},
       },
       opts
     );
@@ -241,6 +247,12 @@
     const clearItem = menuItem("trash", "Delete this chat", "clear");
     const chatList = h("div", { class: "menu-chats" });
     const subtitlesItem = menuItem("captions", "Subtitles…", "subtitles");
+    // Instructor view: Hot topics is instructor-only (unlocked with a key, remembered in this browser).
+    const instructorItem = menuItem("list", "Instructor view…", "instructor");
+    const dashboardItem = menuItem("list", "Open instructor dashboard", "dashboard");
+    const exitInstructorItem = menuItem("minimize", "Exit instructor view", "exit-instructor");
+    dashboardItem.hidden = true;
+    exitInstructorItem.hidden = true;
     downloadItem.disabled = true;
     const menu = h(
       "div",
@@ -254,7 +266,10 @@
       subtitlesItem,
       downloadItem,
       reloadItem,
-      clearItem
+      clearItem,
+      instructorItem,
+      dashboardItem,
+      exitInstructorItem
     );
     const menuBtn = h(
       "button",
@@ -363,6 +378,7 @@
       { class: "topics-btn", type: "button", "aria-label": "Hot topics in this lecture", title: "What students ask about most" },
       h("span", { text: "Hot topics" })
     );
+    topicsBtn.hidden = true; // instructor-only: shown by setInstructor(true)
     const contextStrip = h("div", { class: "context" }, topicsBtn, h("span", { class: "ctx-text" }), subBtn, pop);
 
     const topicsBack = h("button", { class: "topics-back", type: "button", text: "← Back to chat" });
@@ -370,6 +386,38 @@
     const topicsBody = h("div", { class: "topics-body" });
     const topicsUpdated = h("span", { class: "topics-updated" });
     const topicsRefresh = h("button", { class: "topics-refresh", type: "button", text: "↻ Refresh" });
+    // ---- Instructor login: a small view that swaps in for the chat -----------------
+    const instrBack = h("button", { class: "topics-back", type: "button", text: "← Back to chat" });
+    const instrInput = h("input", {
+      class: "instr-input",
+      type: "password",
+      placeholder: "Instructor key",
+      "aria-label": "Instructor key",
+      autocomplete: "off",
+      spellcheck: "false",
+    });
+    const instrUnlock = h("button", { class: "instr-unlock", type: "submit", text: "Unlock" });
+    const instrError = h("p", { class: "instr-error", role: "alert", hidden: true });
+    const instrForm = h("form", { class: "instr-form" }, instrInput, instrUnlock);
+    const instructorView = h(
+      "section",
+      { class: "topics instructor", "aria-label": "Instructor view" },
+      h(
+        "div",
+        { class: "topics-head" },
+        instrBack,
+        h("h3", { class: "topics-title", text: "Instructor view" }),
+        h("p", { class: "topics-sub", text: "For instructors: see what students ask about most in each lecture. Students don't need this." })
+      ),
+      h(
+        "div",
+        { class: "topics-body instr-body" },
+        h("p", { class: "instr-text", text: "Enter the instructor key your team gave you. Nova remembers it in this browser." }),
+        instrForm,
+        instrError
+      )
+    );
+
     const topicsView = h(
       "section",
       { class: "topics", "aria-label": "Hot topics in this lecture" },
@@ -499,6 +547,7 @@
       header,
       contextStrip,
       topicsView,
+      instructorView,
       messages,
       chips,
       voiceBar,
@@ -581,7 +630,7 @@
       event.preventDefault();
       const value = input.value;
       if (!value.trim() || busy) return;
-      if (card.dataset.view === "topics") setView("chat"); // asking from Hot topics goes back to the chat
+      if (card.dataset.view !== "chat") setView("chat"); // asking from another view goes back to the chat
       input.value = "";
       updateSendState();
       submit(value, "input");
@@ -621,6 +670,9 @@
       if (item.dataset.action === "notes-html") o.onExportNotes("html");
       if (item.dataset.action === "chat") o.onSwitchChat(item.dataset.id);
       if (item.dataset.action === "subtitles") setPopOpen(true);
+      if (item.dataset.action === "instructor") showInstructorLogin();
+      if (item.dataset.action === "dashboard") o.onOpenDashboard();
+      if (item.dataset.action === "exit-instructor") o.onExitInstructor();
     });
     // Close the menu / subtitles popover on any click outside them (inside or outside the overlay).
     shadow.addEventListener("click", (event) => {
@@ -792,6 +844,31 @@
       if (view === "chat") scrollToBottom();
     }
 
+    function showInstructorLogin() {
+      api.restore();
+      setView("instructor");
+      instrError.hidden = true;
+      instrInput.value = "";
+      setInstructorBusy(false);
+      instrInput.focus({ preventScroll: true });
+    }
+
+    function setInstructorBusy(on) {
+      instrUnlock.disabled = on;
+      instrInput.disabled = on;
+      instrUnlock.textContent = on ? "Checking…" : "Unlock";
+    }
+
+    instrForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const key = instrInput.value.trim();
+      if (!key) return instrInput.focus();
+      instrError.hidden = true;
+      setInstructorBusy(true);
+      o.onInstructorUnlock(key);
+    });
+    instrBack.addEventListener("click", () => setView("chat"));
+
     function ago(epochSeconds) {
       const mins = Math.max(0, Math.round((Date.now() / 1000 - epochSeconds) / 60));
       if (mins < 1) return "just now";
@@ -890,9 +967,9 @@
 
     function onKey(event) {
       if (event.key !== "Escape") return;
-      if (card.dataset.view === "topics" && pop.hidden && menu.hidden) {
+      if ((card.dataset.view === "topics" || card.dataset.view === "instructor") && pop.hidden && menu.hidden) {
         setView("chat");
-        topicsBtn.focus();
+        if (!topicsBtn.hidden) topicsBtn.focus();
         return;
       }
       if (!pop.hidden) {
@@ -975,6 +1052,23 @@
       },
 
       showChat: () => setView("chat"),
+
+      /** Instructor view on/off: shows or hides Hot topics and the instructor menu items. */
+      setInstructor(on) {
+        topicsBtn.hidden = !on;
+        instructorItem.hidden = Boolean(on);
+        dashboardItem.hidden = !on;
+        exitInstructorItem.hidden = !on;
+        if (!on && card.dataset.view === "topics") setView("chat");
+      },
+      showInstructorLogin,
+      /** Result of checking a key: { error } shows it in the login view; {} just resets the button. */
+      setInstructorLogin({ error = "" } = {}) {
+        setInstructorBusy(false);
+        instrError.hidden = !error;
+        instrError.textContent = error;
+        if (error) instrInput.focus({ preventScroll: true });
+      },
       showTopics() {
         api.restore();
         setView("topics");

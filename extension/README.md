@@ -6,8 +6,8 @@ Plain JavaScript, HTML and CSS. No framework, no build step. **New to this? Foll
 
 ```
 extension/
-├── manifest.json       MV3 manifest: permissions, content script, CSP (wasm)
-├── config.js           BACKEND_URL, wake-word file paths, default settings
+├── manifest.json       MV3 manifest: permissions, content script, CSP
+├── config.js           BACKEND_URL, default settings
 ├── background.js       toolbar button, backend calls (STUB_MODE), voice router (chrome.tts)
 ├── content.js          lecture detection, captions, video tracking, chat, voice commands
 ├── srt.js              SRT parser + caption-window helper, with tests (node srt.js)
@@ -18,22 +18,20 @@ extension/
 ├── subtitles.css       the subtitle pill's styles
 ├── spotter.js          "Hey Nova" listener that runs in the lecture tab (Chrome speech recognition)
 ├── voice-client.js     "Hey Nova" glue for content.js (wake, live transcript, speak); global NovaVoiceClient
-├── offscreen.html/js   hidden page for the optional Picovoice / ElevenLabs engines
-├── audio-processor.js  AudioWorklet: mic -> 16 kHz Int16 frames
-├── options.html/js/css settings: mic permission, voice picker, optional Picovoice key
+├── offscreen.html/js   hidden page for the optional ElevenLabs engine (mic capture + audio)
+├── audio-processor.js  AudioWorklet: mic -> 16 kHz Int16 frames (silence detection)
+├── options.html/js/css settings: mic permission, wake word status, voice picker
 ├── listener.html       fallback pinned tab that runs offscreen.js if Chrome blocks it offscreen
 ├── explain.html/js/css "Explain in depth" whiteboard lesson tab
 ├── overlay.js/css      the Nova card, built inside a Shadow DOM root
-├── vendor/             @picovoice/porcupine-web 4.0.1 (IIFE build, Apache-2.0)
-├── wake/               porcupine_params.pv + your hey-nova_wasm.ppn (see wake/README.md)
 └── icons/              toolbar icons; put the mascot here as nova.png
 ```
 
 ### Voice flow
 
-`spotter.js` hears "Hey Nova" in the lecture tab itself (Chrome's speech recognition is unreliable in hidden pages) and hands the question to `content.js`. With a Picovoice key, `offscreen.js` hears it instead and sends `NOVA_WAKE` to `background.js`. The background routes it to the active tab's lecture frame (registered by `content.js`; re-injected if the tab predates an extension reload). Tabs without a Panopto lecture are ignored. The overlay pops up while Chrome's speech recognition (or ElevenLabs via `POST /transcribe`) turns the question into text. The tab then either runs a local video command or calls `/ask`. The answer is spoken with `chrome.tts` (free) or ElevenLabs `POST /tts`. Saying "Hey Nova" again stops it mid-sentence.
+`spotter.js` hears "Hey Nova" in the lecture tab itself (Chrome's speech recognition is unreliable in hidden pages) and hands the question to `content.js`. `content.js` registers its lecture frame with `background.js` (re-injected if the tab predates an extension reload), so the toolbar button and voice messages land there. Tabs without a Panopto lecture are ignored. The overlay pops up while Chrome's speech recognition (or ElevenLabs via `POST /transcribe`) turns the question into text. The tab then either runs a local video command or calls `/ask`. The answer is spoken with `chrome.tts` (free) or ElevenLabs `POST /tts`. Saying "Hey Nova" again stops it mid-sentence.
 
-Wake word engines: by default, Chrome's speech recognition runs continuously and `offscreen.js` fuzzy-matches "hey nova" in the text, so "Hey Nova, what's X?" works in one breath. Picovoice Porcupine (on-device) is used instead when an AccessKey and `wake/hey-nova_wasm.ppn` are present. If Chrome refuses speech recognition in the offscreen document, `background.js` switches to `listener.html`, a pinned tab that runs the same `offscreen.js`.
+Wake word: Chrome's speech recognition runs continuously in the lecture tab while it's visible, and `spotter.js` fuzzy-matches "hey nova" in the text, so "Hey Nova, what's X?" works in one breath. If Chrome accepts a session but never starts it, a watchdog retries with a fresh recognizer (falling back to Chrome's default mic). If Chrome refuses speech recognition in the offscreen document, `background.js` switches to `listener.html`, a pinned tab that runs the same `offscreen.js`.
 
 ## Load it
 
@@ -150,9 +148,17 @@ The reply shows as a message with clickable chapters that seek the video. It's s
 - Screenshots need the browser to allow reading the video frame (the same condition as vision questions). If it doesn't, the notes are text only.
 - Failed replies and unanswered questions are left out. A second summary replaces the first.
 
-## Hot topics
+## Hot topics (instructors only)
 
-The **🔥 Hot topics** pill (left of the strip under the header) swaps the chat for a view of what students ask about most **in this lecture**: up to 6 themes, each with how many questions it covers, a one-line summary, a ▶ timestamp that jumps to where it comes up, and 2–3 example questions **reworded by the AI** (no student's exact words are shown). With no questions yet, it says "No questions yet". **← Back to chat**, Escape, or asking a question returns to the chat.
+**Students never see Hot topics.** It's for the instructor, unlocked with one shared key (no logins):
+
+1. Set `NOVA_INSTRUCTOR_KEY` on the backend (Railway → Variables). Pick a long random string and give it to the professor.
+2. The professor opens any lecture, then **⋯ → Instructor view…**, pastes the key, and presses **Unlock**. Nova checks it with the server and remembers it in that browser (`chrome.storage.local`, never synced).
+3. Unlocking opens the **instructor dashboard** (`/instructor`: every lecture, "Where students get stuck" timeline, themes, CSV export) on the lecture being watched. From then on, that browser shows a **Hot topics ↗** button on every lecture that opens the dashboard on that lecture, and the ⋯ menu has **Exit instructor view** (forgets the key). The key and lecture travel in the URL's `#fragment`, which isn't sent to the server, and the page removes it from the address bar.
+
+The server enforces it: `POST /topics` and the dashboard API need the `X-Instructor-Key` header (401 for a wrong or missing key, 403 if `NOVA_INSTRUCTOR_KEY` isn't set). A wrong key is never covered up by the demo data (`MOCK_TOPICS`). If the key is changed on the server, Nova drops the old one and asks for the new one. Everyone with the key sees every lecture's stats; per-course keys would be the next step for more professors.
+
+The **Hot topics** pill (left of the strip under the header) swaps the chat for a view of what students ask about most **in this lecture**: up to 6 themes, each with how many questions it covers, a one-line summary, a ▶ timestamp that jumps to where it comes up, and 2–3 example questions **reworded by the AI** (no student's exact words are shown). With no questions yet, it says "No questions yet". **← Back to chat**, Escape, or asking a question returns to the chat.
 
 - Every **typed** question is saved anonymously on the backend (question, time in the video, when it was asked; no identity). **Chip taps aren't counted.** `/ask` now carries `"source": "typed" | "chip"` and the lecture `"title"`.
 - Themes are built by the model when someone opens the view and cached; they're rebuilt after 3 new questions, or when there's anything new and the themes are 10+ minutes old. **↻ Refresh** only rebuilds when new questions have come in.

@@ -174,6 +174,9 @@
    * @param {() => void} opts.onStopSpeaking
    * @param {() => void} opts.onOpenTopics  the Hot topics view was opened
    * @param {() => void} opts.onRefreshTopics  "Refresh" pressed in the Hot topics view
+   * @param {(key: string) => void} opts.onInstructorUnlock  instructor key submitted
+   * @param {() => void} opts.onOpenDashboard  "Open instructor dashboard"
+   * @param {() => void} opts.onExitInstructor  "Exit instructor view"
    */
   function create(opts) {
     const o = Object.assign(
@@ -204,6 +207,9 @@
         onLayoutChange() {},
         onOpenTopics() {},
         onRefreshTopics() {},
+        onInstructorUnlock() {},
+        onOpenDashboard() {},
+        onExitInstructor() {},
       },
       opts
     );
@@ -241,6 +247,10 @@
     const clearItem = menuItem("trash", "Delete this chat", "clear");
     const chatList = h("div", { class: "menu-chats" });
     const subtitlesItem = menuItem("captions", "Subtitles…", "subtitles");
+    // Instructor view: Hot topics is instructor-only (unlocked with a key, remembered in this browser).
+    const instructorItem = menuItem("list", "Instructor view…", "instructor");
+    const exitInstructorItem = menuItem("minimize", "Exit instructor view", "exit-instructor");
+    exitInstructorItem.hidden = true;
     downloadItem.disabled = true;
     const menu = h(
       "div",
@@ -254,7 +264,9 @@
       subtitlesItem,
       downloadItem,
       reloadItem,
-      clearItem
+      clearItem,
+      instructorItem,
+      exitInstructorItem
     );
     const menuBtn = h(
       "button",
@@ -330,7 +342,7 @@
       h(
         "div",
         { class: "voice-main" },
-        h("div", { class: "voice-text" }, h("b", { text: "🔊 Spoken translation" }), voiceNote),
+        h("div", { class: "voice-text" }, h("b", { text: "Spoken translation" }), voiceNote),
         voiceSwitch
       ),
       audioRow
@@ -360,10 +372,11 @@
     // ---- Hot topics: strip pill + a view that swaps in for the chat ----------------
     const topicsBtn = h(
       "button",
-      { class: "topics-btn", type: "button", "aria-label": "Hot topics in this lecture", title: "What students ask about most" },
-      h("span", { class: "topics-flame", "aria-hidden": "true", text: "🔥" }),
-      h("span", { text: "Hot topics" })
+      { class: "topics-btn", type: "button", "aria-label": "Hot topics: open the instructor dashboard for this lecture", title: "Opens the instructor dashboard (new tab)" },
+      h("span", { text: "Hot topics" }),
+      h("span", { class: "topics-ext", "aria-hidden": "true", text: "↗" })
     );
+    topicsBtn.hidden = true; // instructor-only: shown by setInstructor(true)
     const contextStrip = h("div", { class: "context" }, topicsBtn, h("span", { class: "ctx-text" }), subBtn, pop);
 
     const topicsBack = h("button", { class: "topics-back", type: "button", text: "← Back to chat" });
@@ -371,6 +384,38 @@
     const topicsBody = h("div", { class: "topics-body" });
     const topicsUpdated = h("span", { class: "topics-updated" });
     const topicsRefresh = h("button", { class: "topics-refresh", type: "button", text: "↻ Refresh" });
+    // ---- Instructor login: a small view that swaps in for the chat -----------------
+    const instrBack = h("button", { class: "topics-back", type: "button", text: "← Back to chat" });
+    const instrInput = h("input", {
+      class: "instr-input",
+      type: "password",
+      placeholder: "Instructor key",
+      "aria-label": "Instructor key",
+      autocomplete: "off",
+      spellcheck: "false",
+    });
+    const instrUnlock = h("button", { class: "instr-unlock", type: "submit", text: "Unlock" });
+    const instrError = h("p", { class: "instr-error", role: "alert", hidden: true });
+    const instrForm = h("form", { class: "instr-form" }, instrInput, instrUnlock);
+    const instructorView = h(
+      "section",
+      { class: "topics instructor", "aria-label": "Instructor view" },
+      h(
+        "div",
+        { class: "topics-head" },
+        instrBack,
+        h("h3", { class: "topics-title", text: "Instructor view" }),
+        h("p", { class: "topics-sub", text: "For instructors: see what students ask about most in each lecture. Students don't need this." })
+      ),
+      h(
+        "div",
+        { class: "topics-body instr-body" },
+        h("p", { class: "instr-text", text: "Enter the instructor key your team gave you. Nova remembers it in this browser." }),
+        instrForm,
+        instrError
+      )
+    );
+
     const topicsView = h(
       "section",
       { class: "topics", "aria-label": "Hot topics in this lecture" },
@@ -378,7 +423,7 @@
         "div",
         { class: "topics-head" },
         topicsBack,
-        h("h3", { class: "topics-title" }, h("span", { "aria-hidden": "true", text: "🔥 " }), "Hot topics in this lecture"),
+        h("h3", { class: "topics-title" }, "Hot topics in this lecture"),
         topicsSub
       ),
       topicsBody,
@@ -400,7 +445,7 @@
       const parts = [planet()];
       if (!lang) parts.push(h("span", { text: "Subtitles: Off" }));
       else if (translating) parts.push(h("span", { text: shortCode(lang.code) }), progressRing(pct), h("span", { text: `${pct}%` }));
-      else parts.push(h("span", { text: `${shortCode(lang.code)} · ${sub.voice ? "🔊 Voice" : sub.mode === "dual" ? "Dual" : "Translated"}` }));
+      else parts.push(h("span", { text: `${shortCode(lang.code)} · ${sub.voice ? "Voice" : sub.mode === "dual" ? "Dual" : "Translated"}` }));
       parts.push(h("span", { class: "chev", "aria-hidden": "true", text: "▾" }));
       subBtn.replaceChildren(...parts);
       subBtn.setAttribute("aria-label", lang ? `Translated subtitles: ${lang.label}` : "Translated subtitles: off");
@@ -500,6 +545,7 @@
       header,
       contextStrip,
       topicsView,
+      instructorView,
       messages,
       chips,
       voiceBar,
@@ -582,7 +628,7 @@
       event.preventDefault();
       const value = input.value;
       if (!value.trim() || busy) return;
-      if (card.dataset.view === "topics") setView("chat"); // asking from Hot topics goes back to the chat
+      if (card.dataset.view !== "chat") setView("chat"); // asking from another view goes back to the chat
       input.value = "";
       updateSendState();
       submit(value, "input");
@@ -622,6 +668,8 @@
       if (item.dataset.action === "notes-html") o.onExportNotes("html");
       if (item.dataset.action === "chat") o.onSwitchChat(item.dataset.id);
       if (item.dataset.action === "subtitles") setPopOpen(true);
+      if (item.dataset.action === "instructor") showInstructorLogin();
+      if (item.dataset.action === "exit-instructor") o.onExitInstructor();
     });
     // Close the menu / subtitles popover on any click outside them (inside or outside the overlay).
     shadow.addEventListener("click", (event) => {
@@ -793,6 +841,31 @@
       if (view === "chat") scrollToBottom();
     }
 
+    function showInstructorLogin() {
+      api.restore();
+      setView("instructor");
+      instrError.hidden = true;
+      instrInput.value = "";
+      setInstructorBusy(false);
+      instrInput.focus({ preventScroll: true });
+    }
+
+    function setInstructorBusy(on) {
+      instrUnlock.disabled = on;
+      instrInput.disabled = on;
+      instrUnlock.textContent = on ? "Checking…" : "Unlock";
+    }
+
+    instrForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const key = instrInput.value.trim();
+      if (!key) return instrInput.focus();
+      instrError.hidden = true;
+      setInstructorBusy(true);
+      o.onInstructorUnlock(key);
+    });
+    instrBack.addEventListener("click", () => setView("chat"));
+
     function ago(epochSeconds) {
       const mins = Math.max(0, Math.round((Date.now() / 1000 - epochSeconds) / 60));
       if (mins < 1) return "just now";
@@ -840,13 +913,11 @@
       return item;
     }
 
+    // Hot topics opens the instructor dashboard (all lectures, timeline, CSV export) on this lecture.
     topicsBtn.addEventListener("click", () => {
       setMenuOpen(false);
       setPopOpen(false);
-      if (card.dataset.view === "topics") return setView("chat");
-      setView("topics");
-      topicsBack.focus({ preventScroll: true }); // keyboard focus moves into the view (Escape goes back)
-      o.onOpenTopics();
+      o.onOpenDashboard();
     });
     /** Count question times into equal slices of the lecture. Pure, so it's easy to reason about. */
     function bucketTimes(times, duration, maxBars = 24) {
@@ -891,9 +962,9 @@
 
     function onKey(event) {
       if (event.key !== "Escape") return;
-      if (card.dataset.view === "topics" && pop.hidden && menu.hidden) {
+      if ((card.dataset.view === "topics" || card.dataset.view === "instructor") && pop.hidden && menu.hidden) {
         setView("chat");
-        topicsBtn.focus();
+        if (!topicsBtn.hidden) topicsBtn.focus();
         return;
       }
       if (!pop.hidden) {
@@ -976,6 +1047,22 @@
       },
 
       showChat: () => setView("chat"),
+
+      /** Instructor view on/off: shows or hides Hot topics and the instructor menu items. */
+      setInstructor(on) {
+        topicsBtn.hidden = !on;
+        instructorItem.hidden = Boolean(on);
+        exitInstructorItem.hidden = !on;
+        if (!on && card.dataset.view === "topics") setView("chat");
+      },
+      showInstructorLogin,
+      /** Result of checking a key: { error } shows it in the login view; {} just resets the button. */
+      setInstructorLogin({ error = "" } = {}) {
+        setInstructorBusy(false);
+        instrError.hidden = !error;
+        instrError.textContent = error;
+        if (error) instrInput.focus({ preventScroll: true });
+      },
       showTopics() {
         api.restore();
         setView("topics");
@@ -1157,5 +1244,5 @@
     return api;
   }
 
-  root.NovaOverlay = { create, installKeyGuard };
+  root.NovaOverlay = { create, installKeyGuard, alienSvg }; // alienSvg is reused by the subtitle pill
 })(globalThis);

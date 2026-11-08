@@ -107,6 +107,7 @@
   /**
    * @param {object} o
    * @param {string} o.cssUrl
+   * @param {string} [o.mascotUrl]  chrome.runtime.getURL("icons/nova.png")
    * @param {() => DOMRect|null} o.getCardRect  the open Nova card, to keep the pill clear of it
    */
   function create(o) {
@@ -123,7 +124,17 @@
     const waves = el("span", "waves");
     waves.append(el("i"), el("i"), el("i"));
     const planet = el("span", "planet");
-    planet.append(planetSvg());
+    const face = el("span", "face");
+    if (o.mascotUrl) {
+      const img = document.createElement("img");
+      img.src = o.mascotUrl;
+      img.style.cssText = "width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;";
+      img.alt = "";
+      face.append(img);
+    } else {
+      face.append(root.NovaOverlay && root.NovaOverlay.alienSvg ? root.NovaOverlay.alienSvg() : planetSvg());
+    }
+    planet.append(face, el("span", "orbit-ring"));
     const lang = el("span", "lang");
     lang.append(code, waves);
     const badge = el("div", "badge");

@@ -19,6 +19,7 @@ Endpoints (see the "Backend contract" in extension/content.js):
   POST /explain    whiteboard lesson plan
   GET  /instructor instructor dashboard (needs NOVA_INSTRUCTOR_KEY): lectures, themes, question timeline
   POST /instructor/api/recitation  build a 50-minute recitation plan and email it (see recitation.py for NOVA_SMTP_* and NOVA_RECITATION_EMAIL)
+                   POST /topics needs the same key (X-Instructor-Key header): Hot topics is instructor-only
   POST /topics     hot topics: the lecture's most-asked themes (see topics.py; set NOVA_DB_PATH on Railway)
   GET  /voices     ElevenLabs voices (optional voice engine)
   POST /tts        {text, voice_id} -> audio/mpeg (ElevenLabs)
@@ -732,7 +733,7 @@ class Handler(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Instructor-Key")
 
     def _send_bytes(self, code, data, content_type):
         self.send_response(code)
@@ -750,24 +751,25 @@ class Handler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
 
-    def _instructor_auth(self):
-        """True if the request carries the instructor key; otherwise sends the error and returns False."""
+    def _instructor_denied(self):
+        """Hot topics and the dashboard are for instructors only: they need the X-Instructor-Key header.
+        Sends the 403/401 and returns True when access is refused."""
         if not INSTRUCTOR_KEY:
-            self._send(403, {"error": "instructor dashboard is off: set NOVA_INSTRUCTOR_KEY"})
-            return False
+            self._send(403, {"error": "instructor view is off: set NOVA_INSTRUCTOR_KEY"})
+            return True
         given = self.headers.get("X-Instructor-Key", "")
         if not hmac.compare_digest(given.encode(), INSTRUCTOR_KEY.encode()):
-            self._send(401, {"error": "wrong or missing key"})
-            return False
-        return True
+            self._send(401, {"error": "wrong or missing instructor key"})
+            return True
+        return False
 
     def _instructor(self, url):
         """GET /instructor (page) and /instructor/api/* (JSON, needs NOVA_INSTRUCTOR_KEY)."""
         if url.path == "/instructor":
             with open(INSTRUCTOR_PAGE, "rb") as f:
                 return self._send_bytes(200, f.read(), "text/html; charset=utf-8")
-        if not self._instructor_auth():
-            return
+        if self._instructor_denied():
+            return None
         if url.path == "/instructor/api/lectures":
             return self._send(200, {"lectures": STORE.lectures()})
         if url.path == "/instructor/api/lecture":
@@ -807,7 +809,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"text": transcribe(raw, content_type)})
             body = json.loads(raw or b"{}")
             if self.path == "/instructor/api/recitation":
-                if not self._instructor_auth():
+                if self._instructor_denied():
                     return
                 lecture_id = str(body.get("lecture_id") or "")
                 if not lecture_id:
@@ -835,6 +837,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/explain":
                 return self._send(200, explain(body))
             if self.path == "/topics":
+                if self._instructor_denied():  # Hot topics is instructor-only
+                    return None
                 return self._send(200, hot_topics.topics(body, STORE, complete))
             self._send(404, {"error": "not found"})
         except (BadRequest, ValueError) as e:

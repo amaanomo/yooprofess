@@ -1,47 +1,11 @@
 import { hasVoice } from '../lib/tts.js'
-
-const btnBase = {
-  padding: '7px 13px',
-  border: '1px solid #252a4d',
-  borderRadius: 10,
-  background: '#1a1f38',
-  color: '#a78bfa',
-  fontSize: 13,
-  fontWeight: 500,
-  cursor: 'pointer',
-  transition: 'background 0.12s, color 0.12s',
-  outline: 'none',
-}
-
-const btnActive = {
-  background: 'linear-gradient(135deg, #7c3aed, #a855f7)',
-  color: '#fff',
-  border: '1px solid #7c3aed',
-}
-
-const btnDisabled = {
-  opacity: 0.4,
-  cursor: 'default',
-}
+import { LiquidGlassButton } from './ui/apple-tahoe-liquid-glass-button.jsx'
 
 function Btn({ id, onClick, disabled, active, children, title }) {
   return (
-    <button
-      id={id}
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      style={{
-        ...btnBase,
-        ...(active ? btnActive : {}),
-        ...(disabled ? btnDisabled : {}),
-      }}
-      onMouseEnter={(e) => { if (!disabled && !active) e.currentTarget.style.background = '#252a4d' }}
-      onMouseLeave={(e) => { if (!disabled && !active) e.currentTarget.style.background = '#1a1f38' }}
-    >
+    <LiquidGlassButton id={id} onClick={onClick} disabled={disabled} active={active} title={title} size="sm">
       {children}
-    </button>
+    </LiquidGlassButton>
   )
 }
 
@@ -70,16 +34,16 @@ export default function Footer({
         zIndex: 10,
       }}
     >
-      <Btn id="prev" onClick={onPrev} disabled={busy || index <= 0}>◀ Back</Btn>
+      <Btn id="prev" onClick={onPrev} disabled={busy || index <= 0}>Back</Btn>
       <Btn id="play" onClick={onPlay} disabled={busy || !stepsLen}>
-        {playing ? '⏸ Pause' : '▶ Play'}
+        {playing ? 'Pause' : 'Play'}
       </Btn>
-      <Btn id="next" onClick={onNext} disabled={busy || atEnd}>Next ▶</Btn>
-      <Btn id="replay" onClick={onReplay} disabled={busy || !stepsLen}>↻ Replay</Btn>
+      <Btn id="next" onClick={onNext} disabled={busy || atEnd}>Next</Btn>
+      <Btn id="replay" onClick={onReplay} disabled={busy || !stepsLen}>Replay</Btn>
 
       {hasVoice && (
         <Btn id="voice" onClick={onVoice} title="Read the lesson aloud">
-          {muted ? '🔇 Muted' : '🔊 Voice on'}
+          {muted ? 'Voice off' : 'Voice on'}
         </Btn>
       )}
 

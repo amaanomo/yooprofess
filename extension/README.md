@@ -42,7 +42,7 @@ After you edit a file, click the reload icon on Orbit's card in `chrome://extens
 | `PANOPTO_LANGUAGE_IDS` | `content.js` | `{}` | **Unverified.** Panopto's `language=` numbers for professor-uploaded translations. Empty means always use `/translate`. |
 | `BATCH_SIZE`, `CONCURRENCY`, `RETRY_DELAYS_MS`, `LEAD_SECONDS` | `translator.js` | 60, 2, 1 s/3 s, 10 s | Lines per `/translate` call, calls at once, retry backoff, how far before the playhead to start. |
 | `START_WINDOW_S`, `MAX_RATE`, `DUCK_VOLUME`, `SPEECH_CPS` | `voice.js` | 1.5 s, 1.3×, 0.15, per language | Only speak a line within 1.5 s of its start; never speed up past 1.3×; professor's volume while Orbit speaks; characters per second used to fit lines. |
-| `PANOPTO_CAPTION_SELECTORS` | `subtitles.js` | guesses | **Unverified.** Panopto's own caption box; Orbit's pill sits 12px above it. |
+| `PANOPTO_CAPTION_SELECTORS`, `BOTTOM_MARGIN` | `subtitles.js` | guesses, 4% | Orbit's pill sits near the bottom edge of the video (Panopto draws its own captions in a band below the video). If a caption box is ever drawn over the video, the pill sits 12px above it. |
 | `BACKEND_URL` | `background.js` | `https://yooprofess-production.up.railway.app` | Person 2's server. **If you change it, also update `host_permissions` in `manifest.json`.** |
 | `STUB_MODE` | `background.js` | `false` | `true`: no backend calls. Captions aren't uploaded, and questions get a canned reply that guides instead of answering (it names the timestamp and asks the student something back). `false`: real requests to `BACKEND_URL`. |
 
@@ -163,7 +163,7 @@ Expand the payload to check that `context` is the right stretch of the transcrip
 
 **Translation (new):**
 
-- **Caption box selector.** `PANOPTO_CAPTION_SELECTORS` in `subtitles.js` are guesses. Turn on Panopto's CC and check Orbit's pill sits just above it. If it overlaps, inspect Panopto's caption element and add its selector.
+- **Caption placement.** Checked on UB Panopto: its captions sit in a band below the video, so Orbit's pill sits at the video's bottom edge. If another Panopto setup draws captions over the video and they overlap, inspect that caption element and add it to `PANOPTO_CAPTION_SELECTORS`.
 - **Which video gets subtitles.** Orbit puts them on the largest visible video. Check it follows the ⇄ swap button.
 - **Which stream has the audio.** Voice mode turns down every video, so it should work either way; check the professor gets quieter.
 - **Panopto's own translations.** `PANOPTO_LANGUAGE_IDS` is empty; if your lectures have professor-uploaded translations, find their `language=` numbers and fill it in.

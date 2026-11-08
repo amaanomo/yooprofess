@@ -21,7 +21,12 @@
     "[class*='caption-container']",
     ".vjs-text-track-display",
   ];
-  const FALLBACK_BOTTOM = 0.15; // fraction of video height when no caption box is found
+  // Panopto draws its captions in a band below the video, so by default the pill sits near
+  // the video's bottom edge to cover as little of the slide as possible.
+  const BOTTOM_MARGIN = 0.04; // fraction of video height
+  const MIN_BOTTOM_PX = 12;
+  // If captions are drawn on the video itself (a <track> in "showing" mode), stay above them.
+  const NATIVE_CAPTION_BOTTOM = 0.15;
   const GAP_ABOVE_CAPTIONS = 12; // px
   const CARD_GAP = 16; // px between the Orbit card and the pill's usable area
   const MIN_PILL_WIDTH = 240; // px
@@ -174,9 +179,15 @@
       const center = left + span / 2;
       const maxWidth = Math.max(MIN_PILL_WIDTH, span * 0.9);
 
-      // Sit just above Panopto's caption box, or 15% up from the bottom.
+      // Sit just above a caption box drawn over the video; otherwise near the bottom edge.
       const capTop = panoptoCaptionTop(vr);
-      const bottom = capTop != null ? vr.bottom - capTop + GAP_ABOVE_CAPTIONS : vr.height * FALLBACK_BOTTOM;
+      const nativeShowing = Array.from(video.textTracks || []).some((t) => t.mode === "showing");
+      const bottom =
+        capTop != null
+          ? vr.bottom - capTop + GAP_ABOVE_CAPTIONS
+          : nativeShowing
+            ? vr.height * NATIVE_CAPTION_BOTTOM
+            : Math.max(MIN_BOTTOM_PX, vr.height * BOTTOM_MARGIN);
 
       const pillCss = `${Math.round(center)},${Math.round(maxWidth)},${Math.round(bottom)}`;
       if (pillCss !== lastPillCss) {

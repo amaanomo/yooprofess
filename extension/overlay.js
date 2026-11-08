@@ -294,10 +294,40 @@
     minBtn.addEventListener("click", () => api.minimize());
     launcher.addEventListener("click", () => api.restore());
 
+    // ---- Markdown parser (***bold-italic***, **bold**, *italic*) -------------
+    function parseMd(text) {
+      const frag = document.createDocumentFragment();
+      const re = /(\*\*\*([^*]+)\*\*\*|\*\*([^*]+)\*\*|\*([^*]+)\*)/g;
+      let last = 0, m;
+      while ((m = re.exec(text)) !== null) {
+        if (m.index > last) frag.append(document.createTextNode(text.slice(last, m.index)));
+        if (m[2] !== undefined) {
+          const strong = document.createElement("strong");
+          const em = document.createElement("em");
+          em.textContent = m[2];
+          strong.append(em);
+          frag.append(strong);
+        } else if (m[3] !== undefined) {
+          const strong = document.createElement("strong");
+          strong.textContent = m[3];
+          frag.append(strong);
+        } else if (m[4] !== undefined) {
+          const em = document.createElement("em");
+          em.textContent = m[4];
+          frag.append(em);
+        }
+        last = m.index + m[0].length;
+      }
+      if (last < text.length) frag.append(document.createTextNode(text.slice(last)));
+      return frag;
+    }
+
     // ---- Message rendering ---------------------------------------------------
     function messageRow(msg) {
       const role = msg.role === "student" ? "student" : "orbit";
-      const bubble = h("div", { class: "bubble" }, h("span", { class: "bubble-text", text: msg.text }));
+      const bubbleText = h("span", { class: "bubble-text" });
+      bubbleText.append(parseMd(msg.text));
+      const bubble = h("div", { class: "bubble" }, bubbleText);
       if (msg.stub) bubble.append(h("span", { class: "tag", text: "Demo reply (stub mode)" }));
       if (msg.watch) {
         const { start, end, label } = msg.watch;
@@ -310,6 +340,9 @@
           label ? h("span", { class: "watch-btn-label", text: label }) : null
         );
         bubble.append(watchBtn);
+      }
+      if (role === "orbit" && !msg.error && msg.at) {
+        bubble.append(h("button", { class: "deep-dive-btn", type: "button", text: "Deep Dive" }));
       }
       const row = h("div", { class: `msg msg--${role}${msg.error ? " msg--error" : ""}` });
       if (role === "orbit") row.append(avatar("sm"));

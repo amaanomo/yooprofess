@@ -400,6 +400,25 @@ button:disabled {
   white-space: nowrap;
 }
 
+.deep-dive-btn {
+  display: block;
+  margin-top: 10px;
+  padding: 8px 16px;
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  background: var(--green);
+  color: var(--white);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  transition: background-color 120ms ease;
+}
+
+.deep-dive-btn:hover {
+  background: var(--green-600);
+}
+
 /* Typing indicator */
 .typing {
   display: inline-flex;

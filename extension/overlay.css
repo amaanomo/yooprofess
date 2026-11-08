@@ -126,7 +126,7 @@ button:disabled {
 }
 
 .has-mascot .avatar svg {
-  display: none;
+  display: none !important;
 }
 
 .has-mascot .avatar {

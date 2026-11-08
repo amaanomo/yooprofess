@@ -78,7 +78,7 @@ export default function CosmicStarfield() {
 
     // ── Meteors ────────────────────────────────────────────────────────────
     let meteor = null
-    let nextMeteor = Date.now() + 2500 + Math.random() * 2000
+    let nextMeteor = Date.now() + 800 + Math.random() * 800
 
     function spawnMeteor() {
       const angle = (18 + Math.random() * 28) * (Math.PI / 180)
@@ -210,7 +210,7 @@ export default function CosmicStarfield() {
       // ── Meteor ──
       if (!meteor && now >= nextMeteor) {
         spawnMeteor()
-        nextMeteor = now + 2500 + Math.random() * 2500
+        nextMeteor = now + 800 + Math.random() * 1200
       }
       if (meteor) {
         const elapsed = now - meteor.startTime

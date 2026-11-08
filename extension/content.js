@@ -657,6 +657,7 @@
     subs.voiceEngine = NovaVoice.create({
       getVideos: () => document.querySelectorAll("video"),
       onSpeaking: (on) => subs.ui.setSpeaking(on),
+      isPlaying: () => Boolean(state.video && !state.video.paused && !state.video.ended),
     });
     if (typeof speechSynthesis !== "undefined") speechSynthesis.addEventListener("voiceschanged", renderSubtitleControls);
 

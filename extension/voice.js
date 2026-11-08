@@ -82,6 +82,7 @@
    * @param {object} o
    * @param {() => Iterable<HTMLVideoElement>} o.getVideos  every <video> to duck
    * @param {(speaking: boolean) => void} [o.onSpeaking]
+   * @param {() => boolean} [o.isPlaying]  is the lecture video playing right now? Speech never runs while it isn't.
    * @param {object} [o.provider]  defaults to the Web Speech API
    */
   function create(o) {
@@ -135,6 +136,19 @@
       setSpeaking(false);
     }
 
+    const videoPlaying = () => (o.isPlaying ? o.isPlaying() : true);
+
+    // Never talk over a paused video. Pause/start events can be missed or arrive late,
+    // so also check a few times a second while voice is on.
+    let watchdog = 0;
+    function stopIfPaused(reason) {
+      if (inFlight > 0 && !videoPlaying()) {
+        console.log(`[Nova voice] stopped: video is paused (${reason})`);
+        cancel();
+        lastSpoken = -1;
+      }
+    }
+
     const api = {
       available: () => provider.available(),
       prime: () => provider.prime(),
@@ -152,8 +166,12 @@
         if (on === enabled) return;
         enabled = on;
         lastSpoken = -1;
-        if (on) duck();
-        else {
+        clearInterval(watchdog);
+        if (on) {
+          duck();
+          watchdog = setInterval(() => stopIfPaused("watchdog"), 250);
+          if (watchdog && watchdog.unref) watchdog.unref(); // Node (tests) only: don't keep the process alive
+        } else {
           cancel();
           restore();
         }
@@ -194,7 +212,17 @@
           lang: lang.speechLang,
           rate,
           voice,
-          onstart: () => gen === generation && setSpeaking(true),
+          onstart: () => {
+            if (gen !== generation) return;
+            if (!videoPlaying()) {
+              // The engine started a line after the student paused: stop it right away.
+              console.log("[Nova voice] stopped: video is paused (line was starting)");
+              cancel();
+              lastSpoken = -1;
+              return;
+            }
+            setSpeaking(true);
+          },
           onend: () => {
             if (gen !== generation) return;
             inFlight = Math.max(0, inFlight - 1);
@@ -207,8 +235,19 @@
         );
       },
 
-      pause: () => provider.pause(),
-      resume: () => provider.resume(),
+      /**
+       * Video paused: stop talking and drop anything queued, instead of relying on the speech
+       * engine's own pause (which can leave a line or the queue playing). On play, speech picks
+       * up again at the start of the next line.
+       */
+      pause() {
+        if (inFlight > 0) console.log("[Nova voice] stopped: video paused");
+        cancel();
+        lastSpoken = -1;
+      },
+      resume() {
+        /* nothing to resume: the next line starts on its own */
+      },
       /** Seek, language change, lecture change: stop talking and wait for the next line. */
       reset() {
         cancel();
@@ -299,6 +338,50 @@
       v.setEnabled(false);
       assert.equal(video.volume, 0.8);
       assert.equal(video.muted, false);
+    });
+
+    test("pausing the video stops speech even if the engine ignores pause()", () => {
+      let speaking = null;
+      const provider = {
+        available: () => true,
+        voices: () => [],
+        speak: (text, opts) => { speaking = text; opts.onstart(); },
+        cancel: () => (speaking = null),
+        pause() {}, // some speech engines ignore pause(): the line keeps playing
+        resume() {},
+        prime() {},
+      };
+      let playing = true;
+      const v = create({ provider, getVideos: () => [], isPlaying: () => playing });
+      v.setLanguage({ code: "es", speechLang: "es-ES" });
+      v.setEnabled(true);
+      v.lineAt({ index: 0, start: 0, end: 4, text: "hola", t: 0.1, playbackRate: 1, playing: true });
+      assert.equal(speaking, "hola");
+      playing = false;
+      v.pause();
+      assert.equal(speaking, null); // stopped, not left talking
+    });
+
+    test("a line that starts while the video is paused is stopped immediately", () => {
+      let speaking = null;
+      let startLater = null;
+      const provider = {
+        available: () => true,
+        voices: () => [],
+        speak: (text, opts) => { speaking = text; startLater = opts.onstart; }, // engine starts it a moment later
+        cancel: () => (speaking = null),
+        pause() {},
+        resume() {},
+        prime() {},
+      };
+      let playing = true;
+      const v = create({ provider, getVideos: () => [], isPlaying: () => playing });
+      v.setLanguage({ code: "es", speechLang: "es-ES" });
+      v.setEnabled(true);
+      v.lineAt({ index: 0, start: 0, end: 4, text: "hola", t: 0.1, playbackRate: 1, playing: true });
+      playing = false; // student pauses before the engine actually starts talking
+      startLater();
+      assert.equal(speaking, null);
     });
 
     let failed = 0;

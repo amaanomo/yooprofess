@@ -103,7 +103,7 @@ Response (one entry per input `i`; `"fallback": true` means the server couldn't 
 
 - **Turn on:** click the button on the right of the mint strip (`Subtitles: Off ▾`) and pick a language. Subtitles appear over the main video in a green pill with the Nova planet and the language code, so they never look like Panopto's own captions.
 - **Translated / Dual:** Dual shows the professor's original line above the translation.
-- **🔊 Spoken translation:** reads each translated line aloud with the computer's built-in voice. Under the switch, **Professor's audio** picks **Muted** (default: you only hear Nova's translation) or **Lowered** (the professor stays audible at 15%). It never imitates the professor. Turning voice off restores the professor's audio exactly. After a page reload, click **Resume voice** in the chat (browsers need a click before playing audio).
+- **🔊 Spoken translation:** reads each translated line aloud with the computer's built-in voice. Under the switch, **Professor's audio** picks **Muted** (default: you only hear Nova's translation) or **Lowered** (the professor stays audible at 15%). It never imitates the professor. Turning voice off restores the professor's audio exactly. Pausing the video stops the voice right away; when you press play it continues from the next line (console: `[Nova voice] stopped: video paused`). After a page reload, click **Resume voice** in the chat (browsers need a click before playing audio).
 - Translation starts where the student is, then fills in the rest. Progress shows on the strip button and in the popover. Lines the server can't translate show the original text, and the popover offers **Retry**.
 - The setting is remembered across lectures; translations are cached per lecture and language.
 

@@ -1,8 +1,13 @@
 """
-Minimal Orbit backend for local testing.
+Minimal Orbit backend.
 
-    export ANTHROPIC_API_KEY=sk-ant-...
+Uses Gemini or Claude. Pick with ORBIT_PROVIDER=gemini|anthropic; if unset, it uses
+Gemini when GEMINI_API_KEY is set, otherwise Claude when ANTHROPIC_API_KEY is set.
+
+    export GEMINI_API_KEY=...            # or ANTHROPIC_API_KEY=sk-ant-...
     python3 backend/server.py
+
+Models: GEMINI_MODEL (default gemini-3.5-flash-lite), ORBIT_MODEL for Claude (default claude-sonnet-5-5).
 
 Endpoints (see the "Backend contract" in extension/content.js):
   POST /lectures   store the full caption list for a lecture
@@ -14,19 +19,61 @@ import os
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import anthropic
-
-MODEL = os.environ.get("ORBIT_MODEL", "claude-sonnet-5-5")
 PORT = int(os.environ.get("PORT", "8000"))
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+ANTHROPIC_MODEL = os.environ.get("ORBIT_MODEL", "claude-sonnet-5-5")
+
+
+def _pick_provider():
+    chosen = os.environ.get("ORBIT_PROVIDER", "").strip().lower()
+    if chosen in ("gemini", "anthropic"):
+        return chosen
+    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+        return "gemini"
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    return "gemini"
+
+
+PROVIDER = _pick_provider()
+MODEL = GEMINI_MODEL if PROVIDER == "gemini" else ANTHROPIC_MODEL
 _client = None
 
 
 def client():
-    """Created on first use (reads ANTHROPIC_API_KEY), so the module imports without a key."""
+    """The provider's SDK client, created on first use so the module imports without a key or SDK."""
     global _client
     if _client is None:
-        _client = anthropic.Anthropic()
+        if PROVIDER == "gemini":
+            from google import genai  # pip install google-genai; reads GEMINI_API_KEY
+
+            _client = genai.Client()
+        else:
+            import anthropic  # pip install anthropic; reads ANTHROPIC_API_KEY
+
+            _client = anthropic.Anthropic()
     return _client
+
+
+def complete(system, user, max_tokens, json_output=False):
+    """One model call, same shape for both providers. Returns the reply text ("" if none)."""
+    if PROVIDER == "gemini":
+        from google.genai import types
+
+        config = types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+            response_mime_type="application/json" if json_output else None,
+        )
+        resp = client().models.generate_content(model=GEMINI_MODEL, contents=user, config=config)
+        return (resp.text or "").strip()
+    msg = client().messages.create(
+        model=ANTHROPIC_MODEL,
+        max_tokens=max_tokens,
+        system=[{"type": "text", "text": system}],
+        messages=[{"role": "user", "content": user}],
+    )
+    return "".join(b.text for b in msg.content if b.type == "text").strip()
 
 
 LECTURES = {}  # lecture_id -> {"title": str, "captions": [...]}
@@ -107,19 +154,11 @@ def ask(body):
             '"Watch: M:SS-M:SS, <description>" with the word "Watch:" in English; '
             "the description may be in the reply language."
         )
-    msg = client().messages.create(
-        model=MODEL,
-        max_tokens=600,
-        system=[{"type": "text", "text": system}],
-        messages=[
-            {
-                "role": "user",
-                "content": f"Lecture: {title}\n\nTranscript:\n{transcript}\n\n"
-                f"The student is paused at {now}.\nQuestion: {body.get('question', '')}",
-            }
-        ],
+    user = (
+        f"Lecture: {title}\n\nTranscript:\n{transcript}\n\n"
+        f"The student is paused at {now}.\nQuestion: {body.get('question', '')}"
     )
-    return "".join(b.text for b in msg.content if b.type == "text").strip()
+    return complete(system, user, max_tokens=2048)
 
 
 def _parse_translations(text):
@@ -139,19 +178,10 @@ def _parse_translations(text):
 
 
 def _model_translate(language, title, cues):
-    msg = client().messages.create(
-        model=MODEL,
-        max_tokens=8000,
-        system=[{"type": "text", "text": TRANSLATE_SYSTEM.format(language=language)}],
-        messages=[
-            {
-                "role": "user",
-                "content": f"Lecture title: {title or '(unknown)'}\n\nCues:\n"
-                + json.dumps([{"i": c["i"], "text": c["text"]} for c in cues], ensure_ascii=False),
-            }
-        ],
+    user = f"Lecture title: {title or '(unknown)'}\n\nCues:\n" + json.dumps(
+        [{"i": c["i"], "text": c["text"]} for c in cues], ensure_ascii=False
     )
-    return _parse_translations("".join(b.text for b in msg.content if b.type == "text"))
+    return _parse_translations(complete(TRANSLATE_SYSTEM.format(language=language), user, max_tokens=8192, json_output=True))
 
 
 class BadRequest(Exception):
@@ -235,5 +265,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"Orbit backend on http://localhost:{PORT} using {MODEL}")
+    print(f"Orbit backend on http://localhost:{PORT} using {PROVIDER} ({MODEL})")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

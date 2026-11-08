@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova Instructor</title>
+<style>
+  :root { --bg:#0d0f1c; --card:#131629; --line:#252a4d; --ink:#f0e6ff; --muted:#9a93b8; --accent:#a78bfa; --hot:#f97316; --bar:#3b4170; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: 13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:14px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  input, select, button { font:inherit; color:var(--ink); background:#1a1f38; border:1px solid var(--line); border-radius:10px; padding:8px 12px; }
+  select { flex:1; min-width:220px; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  .muted { color:var(--muted); font-size:13px; }
+  .stats { display:flex; gap:24px; flex-wrap:wrap; margin-bottom:6px; }
+  .stat b { display:block; font-size:24px; }
+  .bars { display:flex; align-items:flex-end; gap:3px; height:110px; margin-top:12px; }
+  .bar { flex:1; min-width:0; background:var(--bar); border-radius:3px 3px 1px 1px; }
+  .bar.peak { background:linear-gradient(180deg,#fbbf24,var(--hot)); }
+  .axis { display:flex; justify-content:space-between; margin-top:6px; color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+  .topic h3 { margin:0; font-size:15px; display:flex; justify-content:space-between; gap:10px; }
+  .topic p { margin:6px 0; color:#cfc7e8; font-size:14px; }
+  .topic ul { margin:6px 0 0; padding-left:18px; color:var(--muted); font-size:13px; }
+  .heat { height:4px; background:var(--line); border-radius:4px; margin-top:8px; overflow:hidden; } .heat i { display:block; height:100%; background:linear-gradient(90deg,var(--hot),#fbbf24); }
+  .time { color:var(--accent); font-variant-numeric:tabular-nums; font-weight:600; }
+  .err { color:#f87171; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Nova · Instructor</h1>
+  <p class="sub">What students ask about most, and where in the lecture. Anonymous: no names are stored.</p>
+
+  <section class="card" id="login">
+    <div class="row">
+      <input id="key" type="password" placeholder="Instructor key" autocomplete="off" style="flex:1;min-width:200px">
+      <button id="go">Open</button>
+    </div>
+    <p class="muted err" id="loginErr" hidden></p>
+  </section>
+
+  <section id="app" hidden>
+    <div class="card row">
+      <select id="lectures" aria-label="Lecture"></select>
+      <button id="reload">Refresh</button>
+      <button id="csv">Export CSV</button>
+    </div>
+    <div id="detail"></div>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const fmt = (s) => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0"); };
+  const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids.flat().filter(Boolean)); return n; };
+  let key = "", current = null;
+  try { key = sessionStorage.getItem("nova:instructorKey") || ""; } catch (_) {}
+
+  async function api(path) {
+    const res = await fetch(path, { headers: { "X-Instructor-Key": key } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(data.error || "HTTP " + res.status), { status: res.status });
+    return data;
+  }
+
+  async function open() {
+    try {
+      const { lectures } = await api("/instructor/api/lectures");
+      try { sessionStorage.setItem("nova:instructorKey", key); } catch (_) {}
+      $("login").hidden = true; $("app").hidden = false;
+      const sel = $("lectures");
+      sel.replaceChildren(...lectures.map((l) => el("option", { value: l.lecture_id, textContent: `${l.title || l.lecture_id} (${l.questions})` })));
+      if (!lectures.length) return $("detail").replaceChildren(el("div", { className: "card muted", textContent: "No questions yet. Lectures appear here once students start asking Nova." }));
+      load();
+    } catch (e) {
+      $("login").hidden = false; $("app").hidden = true;
+      $("loginErr").hidden = false; $("loginErr").textContent = e.status === 403 ? e.message : "That key didn't work.";
+    }
+  }
+
+  function timeline(times, duration) {
+    const end = Math.max(duration || 0, ...times.map((x) => x + 1), 60);
+    const n = Math.min(40, Math.max(6, Math.ceil(end / 60))), size = end / n, counts = new Array(n).fill(0);
+    times.forEach((x) => counts[Math.min(n - 1, Math.floor(x / size))]++);
+    const peak = Math.max(...counts), at = counts.indexOf(peak);
+    const bars = counts.map((c, i) => { const b = el("div", { className: "bar" + (c === peak && c ? " peak" : ""), title: `${fmt(i * size)}–${fmt((i + 1) * size)}: ${c}` }); b.style.height = c ? Math.max(6, Math.round(c / peak * 100)) + "%" : "3px"; return b; });
+    return el("div", { className: "card" }, el("b", { textContent: "Where students get stuck" }),
+      el("div", { className: "muted", textContent: `Busiest: ${fmt(at * size)}–${fmt((at + 1) * size)} (${peak} questions)` }),
+      el("div", { className: "bars" }, bars),
+      el("div", { className: "axis" }, el("span", { textContent: "0:00" }), el("span", { textContent: fmt(end / 2) }), el("span", { textContent: fmt(end) })));
+  }
+
+  async function load() {
+    const id = $("lectures").value;
+    $("detail").replaceChildren(el("div", { className: "card muted", textContent: "Loading…" }));
+    try {
+      current = await api("/instructor/api/lecture?lecture_id=" + encodeURIComponent(id));
+      const max = Math.max(1, ...current.topics.map((t) => t.count));
+      $("detail").replaceChildren(
+        el("div", { className: "card stats" },
+          el("div", { className: "stat" }, el("b", { textContent: current.total_questions }), "questions"),
+          el("div", { className: "stat" }, el("b", { textContent: current.topics.length }), "topics")),
+        current.question_times.length ? timeline(current.question_times, 0) : null,
+        ...current.topics.map((t, i) => {
+          const heat = el("div", { className: "heat" }, el("i")); heat.firstChild.style.width = Math.max(8, Math.round(t.count / max * 100)) + "%";
+          return el("div", { className: "card topic" },
+            el("h3", {}, el("span", { textContent: `${i + 1}. ${t.title}` }), el("span", { className: "muted", textContent: `${t.count} question${t.count === 1 ? "" : "s"}` })),
+            heat, t.summary ? el("p", { textContent: t.summary }) : null,
+            el("div", { className: "muted" }, "Around ", el("span", { className: "time", textContent: fmt(t.time) })),
+            t.examples.length ? el("ul", {}, t.examples.map((e) => el("li", { textContent: e }))) : null);
+        }));
+    } catch (e) { $("detail").replaceChildren(el("div", { className: "card err", textContent: "Couldn't load this lecture: " + e.message })); }
+  }
+
+  function csv() {
+    if (!current) return;
+    const q = (s) => '"' + String(s).replace(/"/g, '""') + '"';
+    const rows = [["topic", "questions", "time", "summary"], ...current.topics.map((t) => [t.title, t.count, fmt(t.time), t.summary])];
+    const a = el("a", { href: URL.createObjectURL(new Blob([rows.map((r) => r.map(q).join(",")).join("\n")], { type: "text/csv" })), download: "nova-topics.csv" });
+    document.body.append(a); a.click(); a.remove();
+  }
+
+  $("go").onclick = () => { key = $("key").value.trim(); open(); };
+  $("key").onkeydown = (e) => { if (e.key === "Enter") $("go").click(); };
+  $("lectures").onchange = load; $("reload").onclick = load; $("csv").onclick = csv;
+  if (key) open();
+})();
+</script>
+</body>
+</html>

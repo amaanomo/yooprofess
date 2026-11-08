@@ -148,7 +148,8 @@
         examples: Array.isArray(t.examples) ? t.examples.filter((e) => typeof e === "string").slice(0, 3) : [],
       }));
     const total = data && Number.isFinite(Number(data.total_questions)) ? Number(data.total_questions) : 0;
-    return { status: data && data.status === "empty" ? "empty" : "ok", topics, total, updatedAt: data && data.updated_at };
+    const times = data && Array.isArray(data.question_times) ? data.question_times.map(Number).filter((x) => Number.isFinite(x) && x >= 0) : [];
+    return { status: data && data.status === "empty" ? "empty" : "ok", topics, total, times, updatedAt: data && data.updated_at };
   }
 
   /** Expected /ask response: { "reply": "...", "chips": ["...", ...] }  (chips optional). */
@@ -1573,9 +1574,9 @@
       overlay.setTopics({ state: "error", error: `The Nova server isn't reachable right now (${backendErrorText(res)}).` });
       return;
     }
-    const { status, topics, total, updatedAt } = readTopicsResponse(res.data);
+    const { status, topics, total, times, updatedAt } = readTopicsResponse(res.data);
     log(`Hot topics: ${topics.length} themes from ${total} questions`);
-    overlay.setTopics(status === "empty" || !topics.length ? { state: "empty" } : { state: "ready", topics, total, updatedAt });
+    overlay.setTopics(status === "empty" || !topics.length ? { state: "empty" } : { state: "ready", topics, total, updatedAt, times, duration: state.video && Number.isFinite(state.video.duration) ? state.video.duration : 0 });
   }
 
   // ===========================================================================

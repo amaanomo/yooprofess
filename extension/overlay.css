@@ -473,6 +473,77 @@ button:disabled {
   padding: 14px 20px;
 }
 
+.timeline {
+  padding: 12px 14px;
+  border: 1px solid var(--space-600);
+  border-radius: 14px;
+  background: var(--space-800);
+}
+
+.tl-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--star);
+}
+
+.tl-peak {
+  margin: 2px 0 10px;
+  font-size: 12px;
+  color: var(--star-muted);
+}
+
+.tl-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 84px;
+}
+
+.tl-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.tl-bar i {
+  display: block;
+  width: 100%;
+  border-radius: 3px 3px 1px 1px;
+  background: var(--space-600);
+  transition: background 0.15s;
+}
+
+.tl-bar:hover i,
+.tl-bar:focus-visible i {
+  background: var(--comet);
+}
+
+.tl-bar.peak i {
+  background: linear-gradient(180deg, #fbbf24, #f97316);
+}
+
+.tl-bar:focus-visible {
+  outline: 2px solid var(--aurora);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+.tl-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--star-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .topic {
   padding: 12px 14px;
   border: 1px solid var(--space-600);
@@ -546,6 +617,28 @@ button:disabled {
   font-size: 12px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+.topic-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.topic-teach {
+  padding: 4px 10px;
+  border: 1px solid rgba(103, 232, 249, 0.35);
+  border-radius: 999px;
+  background: var(--aurora-dim);
+  color: var(--aurora);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.topic-teach:hover,
+.topic-teach:focus-visible {
+  background: rgba(103, 232, 249, 0.2);
 }
 
 .topic-seek:hover {

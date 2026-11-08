@@ -34,16 +34,16 @@ export default function Footer({
         zIndex: 10,
       }}
     >
-      <Btn id="prev" onClick={onPrev} disabled={busy || index <= 0}>◀ Back</Btn>
+      <Btn id="prev" onClick={onPrev} disabled={busy || index <= 0}>Back</Btn>
       <Btn id="play" onClick={onPlay} disabled={busy || !stepsLen}>
-        {playing ? '⏸ Pause' : '▶ Play'}
+        {playing ? 'Pause' : 'Play'}
       </Btn>
-      <Btn id="next" onClick={onNext} disabled={busy || atEnd}>Next ▶</Btn>
-      <Btn id="replay" onClick={onReplay} disabled={busy || !stepsLen}>↻ Replay</Btn>
+      <Btn id="next" onClick={onNext} disabled={busy || atEnd}>Next</Btn>
+      <Btn id="replay" onClick={onReplay} disabled={busy || !stepsLen}>Replay</Btn>
 
       {hasVoice && (
         <Btn id="voice" onClick={onVoice} title="Read the lesson aloud">
-          {muted ? '🔇 Muted' : '🔊 Voice on'}
+          {muted ? 'Voice off' : 'Voice on'}
         </Btn>
       )}
 

@@ -382,7 +382,6 @@
       "section",
       { class: "card", role: "dialog", "aria-label": "Ask Nova" },
       header,
-      contextStrip,
       messages,
       chips,
       composer,

@@ -35,7 +35,8 @@
   const CAPTION_WINDOW_SECONDS = 90;
 
   /** Static suggestion chips. Replaced by `chips` from /ask when the backend sends them. */
-  const DEFAULT_CHIPS = ["Explain what was just said", "Give me an example", "Quiz me on this"];
+  const SUMMARY_PROMPT = "Summarize this lecture"; // the chip and the student message; sent to /summary, not /ask
+  const DEFAULT_CHIPS = ["Explain what was just said", "Give me an example", "Quiz me on this", SUMMARY_PROMPT];
 
   /** Tried in order for the lecture title; falls back to document.title. */
   const TITLE_SELECTORS = [
@@ -193,7 +194,8 @@
       cssUrl: chrome.runtime.getURL("overlay.css"),
       mascotUrl: chrome.runtime.getURL("icons/nova.png"),
       windowSeconds: CAPTION_WINDOW_SECONDS,
-      onSend: (text) => ask(text),
+      onSend: (text) => (text === SUMMARY_PROMPT ? summarize() : ask(text)),
+      onSummarize: () => summarize(),
       onDownload: downloadJson,
       onReloadCaptions: () => loadCaptions({ force: true }),
       onClearChat: clearChat,
@@ -639,6 +641,57 @@
     saveMessage(msg);
     overlay.addMessage(msg);
     if (chips) overlay.setChips(chips);
+  }
+
+  /** "Summarize this lecture": one /summary call, shown as a message with clickable chapters. */
+  async function summarize() {
+    if (state.busy) return;
+    if (!state.captions.length) {
+      overlay.setNotice({ key: "summary", kind: "warn", text: "Captions aren't loaded yet, so there's nothing to summarize. Try again in a moment." });
+      return;
+    }
+    const lectureId = state.lectureId;
+    const lang = currentLanguage();
+    const payload = {
+      lecture_id: lectureId,
+      title: state.title,
+      captions: state.captions.map((c) => ({ start: c.start, end: c.end, text: c.text })), // in case the server restarted
+    };
+    if (lang) payload.language = `${lang.english} (${lang.label})`; // summary and chapter titles come back in it
+    log(`/summary with ${payload.captions.length} caption lines${payload.language ? ` in ${payload.language}` : ""}`);
+
+    overlay.clearNotice("summary");
+    saveMessage({ role: "student", text: SUMMARY_PROMPT, time: getCurrentTime(), at: Date.now() });
+    overlay.addMessage({ role: "student", text: SUMMARY_PROMPT });
+    setBusy(true);
+    overlay.showTyping(true);
+
+    const res = await sendToBackground({ type: "NOVA_SUMMARY", payload });
+    if (lectureId !== state.lectureId) return setBusy(false);
+    overlay.showTyping(false);
+    setBusy(false);
+
+    const data = res.ok ? res.data : null;
+    if (!data || typeof data.summary !== "string" || !data.summary.trim()) {
+      warn("/summary failed", res);
+      overlay.addMessage({
+        role: "nova",
+        error: true,
+        text: res.ok
+          ? "I couldn't put a summary together. Try again in a moment."
+          : `I can't reach the Nova server right now (${backendErrorText(res)}). Try again in a moment.`,
+      });
+      return;
+    }
+    const points = Array.isArray(data.key_points) ? data.key_points.filter((p) => typeof p === "string" && p.trim()) : [];
+    const chapters = Array.isArray(data.chapters)
+      ? data.chapters.filter((c) => c && Number.isFinite(c.start) && typeof c.title === "string" && c.title.trim())
+      : [];
+    const text = `**Summary:** ${data.summary.trim()}` + (points.length ? `\n**Key points:**\n${points.map((p) => `• ${p}`).join("\n")}` : "");
+    const msg = { role: "nova", text, chapters, at: Date.now() };
+    if (res.stub) msg.stub = true;
+    saveMessage(msg);
+    overlay.addMessage(msg);
   }
 
   // Opens the whiteboard tab (explain.html) for an Nova reply.

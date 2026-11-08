@@ -99,6 +99,21 @@ Response (one entry per input `i`; `"fallback": true` means the server couldn't 
 { "translations": [{ "i": 120, "text": "..." }] }
 ```
 
+**`POST <BACKEND_URL>/summary`**: "Summarize this lecture" (the chip, or **⋯ → Summarize lecture**). Sent once per click.
+
+```json
+{ "lecture_id": "6f2c...", "title": "...", "language": "Hindi (हिन्दी)",
+  "captions": [{ "start": 872.4, "end": 875.1, "text": "..." }] }
+```
+
+`captions` is a fallback for when the server restarted and forgot the lecture; `language` is only sent when translated subtitles are on. Response (`chapters[].start` is in seconds and is checked against the lecture length; the server keeps its answer per lecture and language until it restarts):
+
+```json
+{ "summary": "...", "key_points": ["..."], "chapters": [{ "start": 120.0, "title": "Layers and weights" }] }
+```
+
+The reply shows as a message with clickable chapters that seek the video. It's saved in the chat like any other message.
+
 `/ask` also gets an optional `"language"` (e.g. `"Spanish (Español)"`) when subtitles are on; the reply comes back in that language and keeps the `Watch:` line format.
 
 ## Translated subtitles and spoken translation

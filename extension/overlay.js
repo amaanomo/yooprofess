@@ -43,6 +43,7 @@
 
   // Icon paths (24x24, stroked).
   const ICONS = {
+    list: ["M8 6h12", "M8 12h12", "M8 18h12", "M4 6h.01", "M4 12h.01", "M4 18h.01"],
     minimize: ["M6 12h12"],
     more: ["M5 12h.01", "M12 12h.01", "M19 12h.01"],
     play: ["M6 4l14 8-14 8z"],
@@ -151,6 +152,7 @@
    * @param {() => void} opts.onReloadCaptions
    * @param {() => void} opts.onClearChat
    * @param {() => void} opts.onNewChat
+   * @param {() => void} opts.onSummarize  "Summarize lecture" picked in the menu
    * @param {(id: string) => void} opts.onSwitchChat
    * @param {(msg: object) => void} opts.onExplain  "Explain in depth" clicked on an Nova reply
    * @param {{code:string,label:string}[]} opts.subtitleLanguages
@@ -173,6 +175,7 @@
         onReloadCaptions() {},
         onClearChat() {},
         onNewChat() {},
+        onSummarize() {},
         onSwitchChat() {},
         onSeek() {},
         onExplain() {},
@@ -213,6 +216,8 @@
     const downloadItem = menuItem("download", "Download captions JSON", "download");
     const reloadItem = menuItem("refresh", "Reload captions", "reload");
     const newChatItem = menuItem("plus", "New chat", "newchat");
+    const summarizeItem = menuItem("list", "Summarize lecture", "summarize");
+    summarizeItem.disabled = true;
     const clearItem = menuItem("trash", "Delete this chat", "clear");
     const chatList = h("div", { class: "menu-chats" });
     const subtitlesItem = menuItem("captions", "Subtitles…", "subtitles");
@@ -223,6 +228,7 @@
       h("div", { class: "menu-info" }, h("div", { class: "menu-label", text: "This lecture" }), menuTitle, menuId),
       newChatItem,
       chatList,
+      summarizeItem,
       subtitlesItem,
       downloadItem,
       reloadItem,
@@ -503,6 +509,7 @@
       if (item.dataset.action === "reload") o.onReloadCaptions();
       if (item.dataset.action === "clear") o.onClearChat();
       if (item.dataset.action === "newchat") o.onNewChat();
+      if (item.dataset.action === "summarize") o.onSummarize();
       if (item.dataset.action === "chat") o.onSwitchChat(item.dataset.id);
       if (item.dataset.action === "subtitles") setPopOpen(true);
     });
@@ -570,7 +577,24 @@
         );
         bubble.append(watchBtn);
       }
-      if (role === "nova" && !msg.error && msg.at) {
+      if (Array.isArray(msg.chapters) && msg.chapters.length) {
+        const fmt = root.NovaSRT ? root.NovaSRT.formatTime : (t) => String(Math.floor(t));
+        bubble.append(
+          h(
+            "div",
+            { class: "chapters", role: "list", "aria-label": "Chapters" },
+            h("div", { class: "chapters-label", text: "Chapters" }),
+            ...msg.chapters.map((c) =>
+              h(
+                "button",
+                { class: "chapter-btn", type: "button", role: "listitem", onclick: () => o.onSeek(c.start) },
+                h("span", { class: "chapter-time", text: fmt(c.start) }),
+                h("span", { class: "chapter-title", text: c.title })
+              )
+            )
+          )
+        );
+      } else if (role === "nova" && !msg.error && msg.at) {
         // Opens the whiteboard lesson tab (onExplain is wired up in content.js).
         bubble.append(
           h("button", { class: "deep-dive-btn", type: "button", onclick: () => o.onExplain(msg) }, "Deep Dive")
@@ -708,6 +732,8 @@
 
       setDownloadEnabled(enabled) {
         downloadItem.disabled = !enabled;
+        summarizeItem.disabled = !enabled;
+        summarizeItem.title = enabled ? "" : "No captions loaded yet";
         downloadItem.title = enabled ? "" : "No captions loaded yet";
       },
 

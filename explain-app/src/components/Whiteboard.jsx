@@ -13,8 +13,6 @@ export default function Whiteboard({ svgLayerRef, captionText, statusText }) {
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
         zIndex: 10,
       }}
     >

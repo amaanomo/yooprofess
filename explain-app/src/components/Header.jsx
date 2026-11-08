@@ -6,8 +6,6 @@ export default function Header({ title, question }) {
         padding: '12px 24px 10px',
         background: 'rgba(13,15,28,0.15)',
         borderBottom: '1px solid #252a4d',
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
         position: 'relative',
         zIndex: 10,
       }}

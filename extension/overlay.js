@@ -119,6 +119,7 @@
    * @param {() => void} opts.onDownload
    * @param {() => void} opts.onReloadCaptions
    * @param {() => void} opts.onClearChat
+   * @param {(msg: object) => void} opts.onExplain  "Explain in depth" clicked on an Orbit reply
    */
   function create(opts) {
     const o = Object.assign(
@@ -132,6 +133,7 @@
         onReloadCaptions() {},
         onClearChat() {},
         onSeek() {},
+        onExplain() {},
       },
       opts
     );
@@ -342,7 +344,10 @@
         bubble.append(watchBtn);
       }
       if (role === "orbit" && !msg.error && msg.at) {
-        bubble.append(h("button", { class: "deep-dive-btn", type: "button", text: "Deep Dive" }));
+        // Opens the whiteboard lesson tab (onExplain is wired up in content.js).
+        bubble.append(
+          h("button", { class: "deep-dive-btn", type: "button", onclick: () => o.onExplain(msg) }, "Deep Dive")
+        );
       }
       const row = h("div", { class: `msg msg--${role}${msg.error ? " msg--error" : ""}` });
       if (role === "orbit") row.append(avatar("sm"));

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orbit whiteboard</title>
+  <link rel="stylesheet" href="explain.css">
+</head>
+<body>
+  <header>
+    <h1 id="title">Orbit whiteboard</h1>
+    <p id="question"></p>
+  </header>
+
+  <main>
+    <aside id="teacher">
+      <div id="teacher-top">
+        <svg id="avatar" viewBox="0 0 100 100" aria-hidden="true">
+          <circle cx="50" cy="50" r="46" fill="#2e6b57"/>
+          <ellipse cx="50" cy="52" rx="30" ry="26" fill="#e8f5ef"/>
+          <circle cx="39" cy="48" r="5" fill="#1d3f34"/>
+          <circle cx="61" cy="48" r="5" fill="#1d3f34"/>
+          <path id="mouth" d="M40 62 Q50 70 60 62" stroke="#1d3f34" stroke-width="3" fill="none" stroke-linecap="round"/>
+        </svg>
+      </div>
+
+      <ol id="outline" aria-label="Lesson steps"></ol>
+
+      <form id="ask-form" autocomplete="off">
+        <input id="ask-input" type="text" maxlength="300" placeholder="Ask a follow-up question…" aria-label="Ask a follow-up question">
+        <button id="ask-btn" type="submit">Ask</button>
+      </form>
+    </aside>
+
+    <section id="board-wrap">
+      <svg id="board" viewBox="0 0 100 62" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <!-- Slight wobble so lines look hand-drawn. -->
+          <filter id="rough" x="-5%" y="-5%" width="110%" height="110%">
+            <feTurbulence type="fractalNoise" baseFrequency="0.12" numOctaves="2" seed="4" result="noise"/>
+            <feDisplacementMap in="SourceGraphic" in2="noise" scale="0.45"/>
+          </filter>
+        </defs>
+        <g id="layer" filter="url(#rough)"></g>
+      </svg>
+      <!-- Captions: the full narration, always visible (works on mute). -->
+      <div id="bubble" role="status" aria-live="polite">Thinking about how to draw this…</div>
+      <div id="status" hidden></div>
+    </section>
+  </main>
+
+  <footer>
+    <button id="prev" type="button">◀ Back</button>
+    <button id="play" type="button">⏸ Pause</button>
+    <button id="next" type="button">Next ▶</button>
+    <button id="replay" type="button">↻ Replay</button>
+    <button id="voice" type="button" title="Read the lesson aloud">🔊 Voice on</button>
+    <span class="sep"></span>
+    <button id="simpler" type="button" title="Explain it in an easier way">Simpler</button>
+    <button id="deeper" type="button" title="Explain it in more depth">Deeper</button>
+    <span id="progress"></span>
+  </footer>
+
+  <script src="explain.js"></script>
+</body>
+</html>

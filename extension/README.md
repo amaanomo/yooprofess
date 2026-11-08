@@ -82,7 +82,9 @@ All request and response shapes are in one place: the **"Backend contract"** sec
 
 `chips` is optional. When the backend sends it, those chips replace the static ones; otherwise the static ones stay. The reply is shown as plain text: newlines are kept and HTML is not rendered.
 
-Nothing else is ever sent: only the lecture ID, title, captions, playback time and the student's questions.
+`/ask` also carries an optional `"image"`: one base64 JPEG (max 1024px wide) of the video at the moment of the question, so Nova can read slides and diagrams. It is skipped if the browser blocks reading the frame. Set `SEND_FRAME = false` in `content.js` to turn it off.
+
+Nothing else is ever sent: only the lecture ID, title, captions, playback time, that frame and the student's questions.
 
 **`POST <BACKEND_URL>/translate`**: translated subtitles. The extension sends about 60 caption lines at a time, starting near where the student is watching.
 

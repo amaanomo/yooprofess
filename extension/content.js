@@ -28,6 +28,10 @@
   const CAPTION_URL = "{origin}/Panopto/Pages/Transcription/GenerateSRT.ashx?id={id}&language=0";
 
   /** How much recent transcript goes with each question. */
+  // Each question also sends one frame of the video so Nova can see the slide. Set false to send text only.
+  const SEND_FRAME = true;
+  const FRAME_MAX_WIDTH = 1024;
+  const FRAME_QUALITY = 0.7;
   const CAPTION_WINDOW_SECONDS = 90;
 
   /** Static suggestion chips. Replaced by `chips` from /ask when the backend sends them. */
@@ -45,6 +49,7 @@
   ];
 
   const MAX_SAVED_MESSAGES = 200;
+  const MAX_SESSIONS = 30; // chats kept per lecture
 
   /** Languages offered for translated subtitles. code is sent to /translate; speechLang picks a voice. */
   const SUBTITLE_LANGUAGES = [
@@ -82,7 +87,7 @@
   }
 
   /** POST <BACKEND_URL>/ask */
-  function buildAskPayload({ lectureId, currentTime, question, context, language }) {
+  function buildAskPayload({ lectureId, currentTime, question, context, language, frame }) {
     const payload = {
       lecture_id: lectureId,
       current_time: Math.round(currentTime * 10) / 10,
@@ -91,6 +96,8 @@
     };
     // Only when translated subtitles are on, e.g. "Spanish (Español)". The reply comes back in it.
     if (language) payload.language = language;
+    // A JPEG of the video as the student sees it (base64, no data: prefix), so Nova can read slides.
+    if (frame) payload.image = frame;
     return payload;
   }
 
@@ -154,6 +161,7 @@
     title: "",
     captions: [],
     history: [],
+    sessions: { activeId: null, list: [] }, // chat sessions for this lecture; history is the active one's messages
     busy: false,
     video: null,
     lastTime: 0,
@@ -189,6 +197,8 @@
       onDownload: downloadJson,
       onReloadCaptions: () => loadCaptions({ force: true }),
       onClearChat: clearChat,
+      onNewChat: newChat,
+      onSwitchChat: switchChat,
       onSeek: seekTo,
       onExplain: explainInDepth,
       subtitleLanguages: SUBTITLE_LANGUAGES,
@@ -229,9 +239,10 @@
     overlay.setChips(DEFAULT_CHIPS);
     refineTitleLater(lectureId);
 
-    state.history = (await storageGet(chatKey(lectureId))) || [];
+    await loadSessions(lectureId);
     if (lectureId !== state.lectureId) return;
     overlay.setHistory(state.history);
+    refreshSessionList();
     if (subs.offerVoice && subs.language && !subs.voice) offerVoiceResume();
     await loadCaptions();
   }
@@ -564,6 +575,26 @@
     return { clean, watch: { start, end: Number.isFinite(end) ? end : start, label: timeMatch[3] ? timeMatch[3].trim() : "" } };
   }
 
+  /**
+   * The current video frame as a base64 JPEG (max FRAME_MAX_WIDTH wide), or null when the browser
+   * won't let us read it (cross-origin or DRM video taints the canvas) or nothing is playing yet.
+   */
+  function captureFrame() {
+    const v = state.video;
+    if (!SEND_FRAME || !v || !v.videoWidth || !v.videoHeight || v.readyState < 2) return null;
+    try {
+      const scale = Math.min(1, FRAME_MAX_WIDTH / v.videoWidth);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(v.videoWidth * scale);
+      canvas.height = Math.round(v.videoHeight * scale);
+      canvas.getContext("2d").drawImage(v, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL("image/jpeg", FRAME_QUALITY).split(",")[1] || null;
+    } catch (err) {
+      warn("Couldn't capture the video frame, asking with text only", err && err.name);
+      return null;
+    }
+  }
+
   async function ask(question) {
     if (state.busy) return;
     const lectureId = state.lectureId;
@@ -571,13 +602,14 @@
     const context = getCaptionWindow(currentTime);
     const lang = currentLanguage();
     const language = lang ? `${lang.english} (${lang.label})` : null;
-    const payload = buildAskPayload({ lectureId, currentTime, question, context, language });
+    const frame = captureFrame();
+    const payload = buildAskPayload({ lectureId, currentTime, question, context, language, frame });
 
     log(
       `/ask at ${formatTime(currentTime)} with ${context.length} caption lines` +
         (context.length ? ` (${formatTime(context[0].start)}–${formatTime(context[context.length - 1].end)})` : "")
     );
-    log("/ask payload", payload);
+    log("/ask payload", frame ? { ...payload, image: `<${Math.round(frame.length / 1024)} KB jpeg>` } : payload);
 
     saveMessage({ role: "student", text: question, time: payload.current_time, at: Date.now() });
     overlay.addMessage({ role: "student", text: question });
@@ -627,17 +659,94 @@
     overlay.setBusy(value);
   }
 
-  function saveMessage(msg) {
-    state.history.push(msg);
-    if (state.history.length > MAX_SAVED_MESSAGES) state.history.splice(0, state.history.length - MAX_SAVED_MESSAGES);
-    storageSet(chatKey(state.lectureId), state.history);
+  // ---- Chat sessions ---------------------------------------------------------
+  // Each lecture keeps a list of chats. Opening the page starts a fresh one (an empty chat
+  // is reused, never piled up); older chats stay in the menu so the student can reopen them.
+
+  const newSessionId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const activeSession = () => state.sessions.list.find((x) => x.id === state.sessions.activeId);
+
+  function startSession() {
+    const empty = state.sessions.list.find((x) => !x.messages.length);
+    const session = empty || { id: newSessionId(), title: "", at: Date.now(), messages: [] };
+    if (!empty) state.sessions.list.unshift(session);
+    state.sessions.activeId = session.id;
+    state.history = session.messages;
   }
 
-  async function clearChat() {
-    state.history = [];
-    await storageRemove(chatKey(state.lectureId));
-    overlay.setHistory([]);
+  async function loadSessions(lectureId) {
+    let saved = await storageGet(sessionsKey(lectureId));
+    if (!saved || !Array.isArray(saved.list)) {
+      saved = { activeId: null, list: [] };
+      const legacy = await storageGet(chatKey(lectureId)); // the single chat saved before sessions existed
+      if (Array.isArray(legacy) && legacy.length) {
+        const first = legacy.find((m) => m.role === "student");
+        saved.list.push({ id: newSessionId(), title: first ? first.text : "Earlier chat", at: legacy[legacy.length - 1].at || Date.now(), messages: legacy });
+      }
+    }
+    state.sessions = saved;
+    startSession();
+    persistSessions();
+  }
+
+  function persistSessions() {
+    const list = state.sessions.list.filter((x) => x.messages.length || x.id === state.sessions.activeId).slice(0, MAX_SESSIONS);
+    state.sessions.list = list;
+    storageSet(sessionsKey(state.lectureId), state.sessions);
+  }
+
+  function refreshSessionList() {
+    overlay.setSessions({
+      activeId: state.sessions.activeId,
+      list: state.sessions.list.filter((x) => x.messages.length).map((x) => ({ id: x.id, title: x.title || "New chat", at: x.at })),
+    });
+  }
+
+  function showSession() {
+    overlay.setHistory(state.history);
     overlay.setChips(DEFAULT_CHIPS);
+    refreshSessionList();
+  }
+
+  function newChat() {
+    if (state.busy) return;
+    if (state.history.length) {
+      const session = { id: newSessionId(), title: "", at: Date.now(), messages: [] };
+      state.sessions.list.unshift(session);
+      state.sessions.activeId = session.id;
+      state.history = session.messages;
+    }
+    persistSessions();
+    showSession();
+    log("New chat for", state.lectureId);
+  }
+
+  function switchChat(id) {
+    const target = state.sessions.list.find((x) => x.id === id);
+    if (state.busy || !target || id === state.sessions.activeId) return;
+    state.sessions.activeId = id;
+    state.history = target.messages;
+    persistSessions();
+    showSession();
+  }
+
+  function saveMessage(msg) {
+    const session = activeSession();
+    if (!session) return;
+    state.history.push(msg);
+    if (state.history.length > MAX_SAVED_MESSAGES) state.history.splice(0, state.history.length - MAX_SAVED_MESSAGES);
+    if (!session.title && msg.role === "student") session.title = String(msg.text || "").slice(0, 60);
+    session.at = Date.now();
+    persistSessions();
+    refreshSessionList();
+  }
+
+  /** "Clear chat": deletes the chat you're in. */
+  async function clearChat() {
+    state.sessions.list = state.sessions.list.filter((x) => x.id !== state.sessions.activeId);
+    startSession();
+    persistSessions();
+    showSession();
     log("Chat cleared for", state.lectureId);
   }
 
@@ -951,7 +1060,8 @@
   }
 
   const captionsKey = (id) => `nova:captions:${id}`;
-  const chatKey = (id) => `nova:chat:${id}`;
+  const chatKey = (id) => `nova:chat:${id}`; // legacy single chat, migrated into a session
+  const sessionsKey = (id) => `nova:sessions:${id}`;
 
   async function storageGet(key) {
     try {

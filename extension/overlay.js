@@ -13,10 +13,39 @@
 
   const SVG_NS = "http://www.w3.org/2000/svg";
 
+  // Cute alien SVG for Nova's avatar (static markup, no user content).
+  function alienSvg() {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 60 60");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("aria-hidden", "true");
+    svg.style.cssText = "width:100%;height:100%;display:block;";
+    // Static alien face — safe to use innerHTML here (no user data).
+    svg.innerHTML =
+      '<ellipse cx="30" cy="36" rx="19" ry="20" fill="#7ee8a2"/>' +
+      '<line x1="22" y1="17" x2="17" y2="7" stroke="#7ee8a2" stroke-width="2.5" stroke-linecap="round"/>' +
+      '<circle cx="16" cy="5.5" r="3.5" fill="#c084fc"/>' +
+      '<circle cx="16" cy="5.5" r="1.5" fill="#f0e6ff"/>' +
+      '<line x1="38" y1="17" x2="43" y2="7" stroke="#7ee8a2" stroke-width="2.5" stroke-linecap="round"/>' +
+      '<circle cx="44" cy="5.5" r="3.5" fill="#c084fc"/>' +
+      '<circle cx="44" cy="5.5" r="1.5" fill="#f0e6ff"/>' +
+      '<ellipse cx="22" cy="34" rx="6.5" ry="7.5" fill="white"/>' +
+      '<ellipse cx="38" cy="34" rx="6.5" ry="7.5" fill="white"/>' +
+      '<circle cx="23" cy="35" r="4" fill="#1a0533"/>' +
+      '<circle cx="39" cy="35" r="4" fill="#1a0533"/>' +
+      '<circle cx="24.5" cy="33" r="1.4" fill="white"/>' +
+      '<circle cx="40.5" cy="33" r="1.4" fill="white"/>' +
+      '<path d="M23 44 Q30 50 37 44" stroke="#2d6a4f" stroke-width="2.2" stroke-linecap="round" fill="none"/>' +
+      '<ellipse cx="16" cy="41" rx="3.2" ry="1.9" fill="rgba(192,132,252,0.45)"/>' +
+      '<ellipse cx="44" cy="41" rx="3.2" ry="1.9" fill="rgba(192,132,252,0.45)"/>';
+    return svg;
+  }
+
   // Icon paths (24x24, stroked).
   const ICONS = {
     minimize: ["M6 12h12"],
     more: ["M5 12h.01", "M12 12h.01", "M19 12h.01"],
+    play: ["M6 4l14 8-14 8z"],
     captions: [
       "M3 7a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z",
       "M7 12h3",
@@ -27,6 +56,8 @@
     send: ["M21 3 10 14", "M21 3l-7 18-4-7-7-4z"],
     download: ["M12 4v11", "M7 10l5 5 5-5", "M5 20h14"],
     refresh: ["M20 11a8 8 0 1 0-2.3 5.7", "M20 4v7h-7"],
+    plus: ["M12 5v14", "M5 12h14"],
+    chat: ["M4 5h16v11H9l-5 4z"],
     trash: ["M4 7h16", "M9 7V4h6v3", "M6 7l1 13h10l1-13"],
     info: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M12 16v-5", "M12 8h.01"],
     check: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M8 12.5l2.5 2.5L16 9.5"],
@@ -119,6 +150,8 @@
    * @param {() => void} opts.onDownload
    * @param {() => void} opts.onReloadCaptions
    * @param {() => void} opts.onClearChat
+   * @param {() => void} opts.onNewChat
+   * @param {(id: string) => void} opts.onSwitchChat
    * @param {(msg: object) => void} opts.onExplain  "Explain in depth" clicked on an Nova reply
    * @param {{code:string,label:string}[]} opts.subtitleLanguages
    * @param {(code: string|null) => void} opts.onSubtitleLanguage
@@ -139,6 +172,8 @@
         onDownload() {},
         onReloadCaptions() {},
         onClearChat() {},
+        onNewChat() {},
+        onSwitchChat() {},
         onSeek() {},
         onExplain() {},
         subtitleLanguages: [],
@@ -161,7 +196,11 @@
     const shadow = host.attachShadow({ mode: "open" });
 
     // ---- Build the DOM -------------------------------------------------------
-    const avatar = (size) => h("span", { class: `avatar avatar--${size}`, "aria-hidden": "true" });
+    const avatar = (size) => {
+      const el = h("span", { class: `avatar avatar--${size}`, "aria-hidden": "true" });
+      el.append(alienSvg());
+      return el;
+    };
 
     const statusText = h("span", { class: "status-text", text: "Looking for the video…" });
     const status = h("div", { class: "status", "data-state": "waiting" }, h("span", { class: "dot" }), statusText);
@@ -173,13 +212,17 @@
       h("button", { class: "menu-item", type: "button", role: "menuitem", "data-action": action }, icon(iconName), h("span", { text: label }));
     const downloadItem = menuItem("download", "Download captions JSON", "download");
     const reloadItem = menuItem("refresh", "Reload captions", "reload");
-    const clearItem = menuItem("trash", "Clear chat", "clear");
+    const newChatItem = menuItem("plus", "New chat", "newchat");
+    const clearItem = menuItem("trash", "Delete this chat", "clear");
+    const chatList = h("div", { class: "menu-chats" });
     const subtitlesItem = menuItem("captions", "Subtitles…", "subtitles");
     downloadItem.disabled = true;
     const menu = h(
       "div",
       { class: "menu", role: "menu", hidden: true },
       h("div", { class: "menu-info" }, h("div", { class: "menu-label", text: "This lecture" }), menuTitle, menuId),
+      newChatItem,
+      chatList,
       subtitlesItem,
       downloadItem,
       reloadItem,
@@ -210,11 +253,11 @@
       svg.setAttribute("viewBox", "0 0 24 24");
       svg.setAttribute("aria-hidden", "true");
       const body = document.createElementNS(SVG_NS, "circle");
-      for (const [k, v] of Object.entries({ cx: 12, cy: 12, r: 4.6, fill: "#2e6b57" })) body.setAttribute(k, v);
+      for (const [k, v] of Object.entries({ cx: 12, cy: 12, r: 4.6, fill: "#a78bfa" })) body.setAttribute(k, v);
       const ring = document.createElementNS(SVG_NS, "g");
       ring.setAttribute("class", "ring");
       const ellipse = document.createElementNS(SVG_NS, "ellipse");
-      for (const [k, v] of Object.entries({ cx: 12, cy: 12, rx: 10, ry: 3.6, fill: "none", stroke: "#2e6b57", "stroke-width": 1.6, transform: "rotate(-24 12 12)" }))
+      for (const [k, v] of Object.entries({ cx: 12, cy: 12, rx: 10, ry: 3.6, fill: "none", stroke: "#a78bfa", "stroke-width": 1.6, transform: "rotate(-24 12 12)" }))
         ellipse.setAttribute(k, v);
       ring.append(ellipse);
       svg.append(body, ring);
@@ -226,7 +269,7 @@
       svg.setAttribute("class", "prog-ring");
       svg.setAttribute("aria-hidden", "true");
       const c = 2 * Math.PI * 6;
-      for (const [stroke, offset] of [["rgba(255,255,255,.3)", 0], ["#c6e86b", c * (1 - pct / 100)]]) {
+      for (const [stroke, offset] of [["rgba(167,139,250,.25)", 0], ["#67e8f9", c * (1 - pct / 100)]]) {
         const circle = document.createElementNS(SVG_NS, "circle");
         for (const [k, v] of Object.entries({ cx: 8, cy: 8, r: 6, stroke, "stroke-dasharray": c, "stroke-dashoffset": offset }))
           circle.setAttribute(k, v);
@@ -279,7 +322,8 @@
       progress,
       h("p", { class: "sub-foot", text: "Panopto's own captions stay as they are; use its CC button." })
     );
-    const contextStrip = h("div", { class: "context" }, icon("captions"), contextText, subBtn, pop);
+    // The banner text is gone, but the strip stays: it holds the subtitles button and popover.
+    const contextStrip = h("div", { class: "context" }, h("span", { class: "ctx-text" }), subBtn, pop);
 
     function setPopOpen(open) {
       pop.hidden = !open;
@@ -458,6 +502,8 @@
       if (item.dataset.action === "download") o.onDownload();
       if (item.dataset.action === "reload") o.onReloadCaptions();
       if (item.dataset.action === "clear") o.onClearChat();
+      if (item.dataset.action === "newchat") o.onNewChat();
+      if (item.dataset.action === "chat") o.onSwitchChat(item.dataset.id);
       if (item.dataset.action === "subtitles") setPopOpen(true);
     });
     // Close the menu / subtitles popover on any click outside them (inside or outside the overlay).
@@ -514,10 +560,12 @@
         const { start, end, label } = msg.watch;
         const fmt = root.NovaSRT ? root.NovaSRT.formatTime : (t) => String(Math.floor(t));
         const timeStr = end && end !== start ? `${fmt(start)} – ${fmt(end)}` : fmt(start);
+        const watchPlaySvg = icon("play", "watch-play-icon");
         const watchBtn = h(
           "button",
           { class: "watch-btn", type: "button", onclick: () => o.onSeek(start) },
-          h("span", { class: "watch-btn-time", text: `▶ ${timeStr}` }),
+          watchPlaySvg,
+          h("span", { class: "watch-btn-time", text: timeStr }),
           label ? h("span", { class: "watch-btn-label", text: label }) : null
         );
         bubble.append(watchBtn);
@@ -649,6 +697,9 @@
         lastStatus = text;
         status.dataset.state = state;
         statusText.textContent = text;
+        // Cascade flip (raise from split-flap challenger).
+        statusText.classList.remove("flip");
+        requestAnimationFrame(() => statusText.classList.add("flip"));
       },
 
       setContextLabel(text) {
@@ -658,6 +709,16 @@
       setDownloadEnabled(enabled) {
         downloadItem.disabled = !enabled;
         downloadItem.title = enabled ? "" : "No captions loaded yet";
+      },
+
+      /** The chats saved for this lecture: { activeId, list: [{ id, title, at }] }, newest first. */
+      setSessions({ activeId, list }) {
+        const rows = (list || []).slice(0, 8).map((c) => {
+          const row = h("button", { class: `menu-item menu-chat${c.id === activeId ? " active" : ""}`, type: "button", role: "menuitem", "data-action": "chat", "data-id": c.id }, icon("chat"), h("span", { text: c.title }));
+          row.title = new Date(c.at).toLocaleString();
+          return row;
+        });
+        chatList.replaceChildren(...(rows.length ? [h("div", { class: "menu-label chats-label", text: "Chats" }), ...rows] : []));
       },
 
       /** Replace the whole conversation (welcome + saved history). Clears any notice. */
@@ -701,9 +762,9 @@
         if (on && !typingEl) {
           typingEl = h(
             "div",
-            { class: "msg msg--nova msg--typing", "aria-label": "Nova is typing" },
+            { class: "msg msg--nova msg--typing", "aria-label": "Nova is thinking" },
             avatar("sm"),
-            h("div", { class: "bubble typing" }, h("span"), h("span"), h("span"))
+            h("div", { class: "bubble typing" }, h("span"), h("span"), h("span"), h("span"), h("span"), h("span"), h("span"))
           );
           messages.append(typingEl);
           scrollToBottom();

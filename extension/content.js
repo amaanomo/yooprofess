@@ -148,7 +148,8 @@
         examples: Array.isArray(t.examples) ? t.examples.filter((e) => typeof e === "string").slice(0, 3) : [],
       }));
     const total = data && Number.isFinite(Number(data.total_questions)) ? Number(data.total_questions) : 0;
-    return { status: data && data.status === "empty" ? "empty" : "ok", topics, total, updatedAt: data && data.updated_at };
+    const times = data && Array.isArray(data.question_times) ? data.question_times.map(Number).filter((x) => Number.isFinite(x) && x >= 0) : [];
+    return { status: data && data.status === "empty" ? "empty" : "ok", topics, total, times, updatedAt: data && data.updated_at };
   }
 
   /** Expected /ask response: { "reply": "...", "chips": ["...", ...] }  (chips optional). */
@@ -273,6 +274,9 @@
       onLayoutChange: () => subs.ui && subs.ui.relayout(),
       onOpenTopics: () => loadTopics(),
       onRefreshTopics: () => loadTopics({ refresh: true }),
+      onInstructorUnlock: unlockInstructor,
+      onOpenDashboard: openDashboard,
+      onExitInstructor: exitInstructor,
       onToggleVoice: (on) => voice.setVoiceReplies(on),
       onMic: () => voice.listen(),
       onStopSpeaking: () => voice.stopSpeaking(),
@@ -298,6 +302,7 @@
     sendToBackground({ type: "NOVA_REGISTER_LECTURE_FRAME" });
 
     await overlay.mount();
+    await initInstructor();
     voice.sync();
     overlay.setChips(DEFAULT_CHIPS);
     await initSubtitles();
@@ -1292,7 +1297,7 @@
 
   async function initSubtitles() {
     if (typeof NovaSubtitles === "undefined" || typeof NovaVoice === "undefined") return;
-    subs.ui = NovaSubtitles.create({ cssUrl: chrome.runtime.getURL("subtitles.css"), getCardRect: () => overlay.getCardRect() });
+    subs.ui = NovaSubtitles.create({ cssUrl: chrome.runtime.getURL("subtitles.css"), mascotUrl: chrome.runtime.getURL("icons/nova.png"), getCardRect: () => overlay.getCardRect() });
     await subs.ui.mount();
     subs.voiceEngine = NovaVoice.create({
       getVideos: () => document.querySelectorAll("video"),
@@ -1571,6 +1576,54 @@
 
   let topicsToken = 0;
 
+  // Hot topics is instructor-only: the key is entered once (⋯ → Instructor view…) and kept in
+  // chrome.storage.local for this browser. The background sends it as X-Instructor-Key.
+  const INSTRUCTOR_KEY_STORAGE = "nova:instructorKey";
+
+  async function initInstructor() {
+    const key = await storageGet(INSTRUCTOR_KEY_STORAGE);
+    overlay.setInstructor(Boolean(key));
+    // Unlocking or exiting in another tab applies here too.
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "local" || !changes[INSTRUCTOR_KEY_STORAGE]) return;
+      overlay.setInstructor(Boolean(changes[INSTRUCTOR_KEY_STORAGE].newValue));
+    });
+  }
+
+  function refusedText(res) {
+    if (res.status === 403) return "Instructor view is turned off on the server (NOVA_INSTRUCTOR_KEY isn't set).";
+    if (res.status === 401) return "That key didn't work. Check it and try again.";
+    return `The Nova server isn't reachable right now (${backendErrorText(res)}).`;
+  }
+
+  async function unlockInstructor(key) {
+    const lectureId = state.lectureId;
+    const res = await sendToBackground({ type: "NOVA_INSTRUCTOR_CHECK", key, payload: buildTopicsPayload({ lectureId }) });
+    if (!res.ok) {
+      warn("Instructor key refused", res.status || res.error);
+      overlay.setInstructorLogin({ error: refusedText(res) });
+      return;
+    }
+    await storageSet(INSTRUCTOR_KEY_STORAGE, key);
+    overlay.setInstructorLogin({});
+    overlay.setInstructor(true);
+    log("Instructor view on");
+    overlay.showChat();
+    openDashboard(); // straight to the dashboard for this lecture
+  }
+
+  /** Hot topics lives on the instructor dashboard (new tab), opened on this lecture. */
+  function openDashboard() {
+    return sendToBackground({ type: "NOVA_OPEN_DASHBOARD", lectureId: state.lectureId });
+  }
+
+  async function exitInstructor() {
+    await storageRemove(INSTRUCTOR_KEY_STORAGE);
+    overlay.setInstructor(false);
+    overlay.showChat();
+    log("Instructor view off");
+  }
+
   async function loadTopics({ refresh = false } = {}) {
     const lectureId = state.lectureId;
     const token = ++topicsToken;
@@ -1579,12 +1632,20 @@
     if (token !== topicsToken || lectureId !== state.lectureId) return;
     if (!res.ok) {
       warn("/topics failed", res.error, res.status || "", res.detail || "");
-      overlay.setTopics({ state: "error", error: `The Nova server isn't reachable right now (${backendErrorText(res)}).` });
+      if (res.status === 401) {
+        // The key was changed on the server: leave instructor view and ask for the new one.
+        await storageRemove(INSTRUCTOR_KEY_STORAGE);
+        overlay.setInstructor(false);
+        overlay.showInstructorLogin();
+        overlay.setInstructorLogin({ error: "Your instructor key no longer works. Enter the new one." });
+        return;
+      }
+      overlay.setTopics({ state: "error", error: refusedText(res) });
       return;
     }
-    const { status, topics, total, updatedAt } = readTopicsResponse(res.data);
+    const { status, topics, total, times, updatedAt } = readTopicsResponse(res.data);
     log(`Hot topics: ${topics.length} themes from ${total} questions`);
-    overlay.setTopics(status === "empty" || !topics.length ? { state: "empty" } : { state: "ready", topics, total, updatedAt });
+    overlay.setTopics(status === "empty" || !topics.length ? { state: "empty" } : { state: "ready", topics, total, updatedAt, times, duration: state.video && Number.isFinite(state.video.duration) ? state.video.duration : 0 });
   }
 
   // ===========================================================================

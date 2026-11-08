@@ -19,6 +19,9 @@ const cfg = self.NovaConfig;
  * reply, so the UI can be demoed without a server. Voice still needs the server.
  */
 const STUB_MODE = false;
+// Hot topics demo data (themes + a question timeline) when the server has no questions yet.
+// Set to false to always show real data only.
+const MOCK_TOPICS = true;
 
 const TIMEOUT_MS = { lectures: 20000, ask: 45000, explain: 60000, translate: 60000, summary: 90000, topics: 45000 };
 
@@ -521,6 +524,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     topicsBackend(msg.payload).then(sendResponse);
     return true;
   }
+  if (msg.type === "NOVA_INSTRUCTOR_CHECK") {
+    // Try a key before saving it: the server answers 401 for a wrong key, 403 if instructor view is off.
+    topicsBackend(msg.payload, msg.key).then(sendResponse);
+    return true;
+  }
+  if (msg.type === "NOVA_OPEN_DASHBOARD") {
+    openInstructorDashboard(msg.lectureId).then(sendResponse);
+    return true;
+  }
 });
 
 // ============================================================================
@@ -565,7 +577,30 @@ async function summaryBackend(payload) {
   return postJSON("/summary", payload, TIMEOUT_MS.summary);
 }
 
-async function topicsBackend(payload) {
+// ---- Instructor view --------------------------------------------------------------
+// Hot topics is instructor-only. The key lives in chrome.storage.local (this browser only)
+// and goes to the server in the X-Instructor-Key header.
+const INSTRUCTOR_KEY_STORAGE = "nova:instructorKey";
+
+async function getInstructorKey() {
+  return (await chrome.storage.local.get(INSTRUCTOR_KEY_STORAGE))[INSTRUCTOR_KEY_STORAGE] || "";
+}
+
+async function openInstructorDashboard(lectureId) {
+  const key = await getInstructorKey();
+  // The key rides in the #fragment, which browsers never send to the server; the page removes it at once.
+  // lecture= opens the dashboard on the lecture the instructor was watching.
+  const hash = new URLSearchParams();
+  if (key) hash.set("key", key);
+  if (lectureId) hash.set("lecture", lectureId);
+  const url = cfg.BACKEND_URL.replace(/\/+$/, "") + "/instructor" + (hash.toString() ? "#" + hash.toString() : "");
+  await chrome.tabs.create({ url });
+  return { ok: true };
+}
+
+async function topicsBackend(payload, keyOverride) {
+  const key = keyOverride != null ? keyOverride : await getInstructorKey();
+  if (!key) return { ok: false, status: 401, error: "http", data: { error: "instructor key required" } };
   if (STUB_MODE) {
     // Sample themes so the Hot topics view can be demoed offline.
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -586,7 +621,37 @@ async function topicsBackend(payload) {
     };
   }
   log(`POST /topics ${payload.lecture_id}${payload.refresh ? " (refresh)" : ""}`);
-  return postJSON("/topics", payload, TIMEOUT_MS.topics);
+  const res = await postJSON("/topics", payload, TIMEOUT_MS.topics, { "X-Instructor-Key": key });
+  // Never cover up a refused key with demo data: 401/403 must reach the instructor-view UI.
+  const refused = res.status === 401 || res.status === 403;
+  if (MOCK_TOPICS && !refused && (!res.ok || !res.data || res.data.status === "empty")) return mockTopics();
+  return res;
+}
+
+/** Demo Hot topics: a lecture with three rough patches, so the timeline has a story. */
+function mockTopics() {
+  const bursts = [[420, 6, 90], [1260, 9, 150], [1500, 5, 100], [2700, 14, 200], [3480, 7, 120], [4560, 4, 90]]; // [center s, count, spread s]
+  const times = [];
+  let seed = 7;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  for (const [center, count, spread] of bursts) for (let i = 0; i < count; i++) times.push(Math.max(5, Math.round(center + (rand() - 0.5) * 2 * spread)));
+  times.sort((a, b) => a - b);
+  return {
+    ok: true,
+    mock: true,
+    data: {
+      status: "ok",
+      total_questions: times.length,
+      updated_at: Date.now() / 1000 - 90,
+      question_times: times,
+      topics: [
+        { title: "Backpropagation and the chain rule", summary: "Students can't see how the loss gradient flows back through the layers.", count: 14, time: 2700, examples: ["Why do we multiply the derivatives layer by layer?", "How does a weight in layer 1 affect the final loss?"] },
+        { title: "What a weight and bias do", summary: "Unclear how w and b combine into z = w·x + b.", count: 9, time: 1260, examples: ["What's the difference between a weight and a bias?"] },
+        { title: "Choosing an activation function", summary: "Why f(z) is needed and how ReLU differs from sigmoid.", count: 7, time: 3480, examples: ["Why can't the network just use z directly?"] },
+        { title: "Learning rate", summary: "Confusion about step size and divergence.", count: 5, time: 1500, examples: ["What happens if the learning rate is too big?"] },
+      ],
+    },
+  };
 }
 
 async function translateBackend(payload) {
@@ -601,8 +666,8 @@ async function translateBackend(payload) {
   return postJSON("/translate", payload, TIMEOUT_MS.translate);
 }
 
-function postJSON(path, body, timeoutMs) {
-  return request(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }, timeoutMs);
+function postJSON(path, body, timeoutMs, headers = {}) {
+  return request(path, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) }, timeoutMs);
 }
 
 function getJSON(path, timeoutMs) {

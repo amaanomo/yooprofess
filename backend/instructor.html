@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova Instructor</title>
+<style>
+  :root { --bg:#0d0f1c; --card:#131629; --line:#252a4d; --ink:#f0e6ff; --muted:#9a93b8; --accent:#a78bfa; --hot:#f97316; --bar:#3b4170; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: 13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:14px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  input, select, button { font:inherit; color:var(--ink); background:#1a1f38; border:1px solid var(--line); border-radius:10px; padding:8px 12px; }
+  select { flex:1; min-width:220px; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  .muted { color:var(--muted); font-size:13px; }
+  .stats { display:flex; gap:24px; flex-wrap:wrap; margin-bottom:6px; }
+  .stat b { display:block; font-size:24px; }
+  .bars { display:flex; align-items:flex-end; gap:3px; height:110px; margin-top:12px; }
+  .bar { flex:1; min-width:0; background:var(--bar); border-radius:3px 3px 1px 1px; }
+  .bar.peak { background:linear-gradient(180deg,#fbbf24,var(--hot)); }
+  .axis { display:flex; justify-content:space-between; margin-top:6px; color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+  .topic h3 { margin:0; font-size:15px; display:flex; justify-content:space-between; gap:10px; }
+  .topic p { margin:6px 0; color:#cfc7e8; font-size:14px; }
+  .topic ul { margin:6px 0 0; padding-left:18px; color:var(--muted); font-size:13px; }
+  .heat { height:4px; background:var(--line); border-radius:4px; margin-top:8px; overflow:hidden; } .heat i { display:block; height:100%; background:linear-gradient(90deg,var(--hot),#fbbf24); }
+  .time { color:var(--accent); font-variant-numeric:tabular-nums; font-weight:600; }
+  .err { color:#f87171; }
+  .plan h3 { margin:0 0 2px; font-size:16px; } .plan .goal { color:#cfc7e8; margin:4px 0 12px; }
+  .blk { display:flex; gap:14px; padding:10px 0; border-top:1px solid var(--line); }
+  .blk .mins { flex:none; width:74px; color:var(--accent); font-variant-numeric:tabular-nums; font-weight:600; }
+  .blk b { display:block; } .blk i { color:var(--muted); } .blk p { margin:4px 0 0; font-size:14px; color:#cfc7e8; }
+  .ok { color:#4ade80; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Nova · Instructor</h1>
+  <p class="sub">What students ask about most, and where in the lecture. Anonymous: no names are stored.</p>
+
+  <section class="card" id="login">
+    <div class="row">
+      <input id="key" type="password" placeholder="Instructor key" autocomplete="off" style="flex:1;min-width:200px">
+      <button id="go">Open</button>
+    </div>
+    <p class="muted err" id="loginErr" hidden></p>
+  </section>
+
+  <section id="app" hidden>
+    <div class="card row">
+      <select id="lectures" aria-label="Lecture"></select>
+      <button id="reload">Refresh</button>
+      <button id="csv">Export CSV</button>
+      <button id="recit" title="Build a 50-minute TA recitation plan from this lecture's questions and email it">Export recitation plan</button>
+    </div>
+    <div id="recitStatus" class="card" role="status" hidden></div>
+    <div id="detail"></div>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const fmt = (s) => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0"); };
+  const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids.flat().filter(Boolean)); return n; };
+  let key = "", current = null;
+  try { key = sessionStorage.getItem("nova:instructorKey") || ""; } catch (_) {}
+  // Opened from Nova's "Open instructor dashboard": the key arrives in the #fragment (never sent to the
+  // server). Keep it for this tab and remove it from the address bar right away.
+  const novaHash = new URLSearchParams(location.hash.slice(1));
+  const fromNova = novaHash.get("key");
+  const wantLecture = novaHash.get("lecture") || ""; // the lecture the instructor was watching in Nova
+  if (fromNova) {
+    key = fromNova;
+    try { sessionStorage.setItem("nova:instructorKey", key); } catch (_) {}
+  }
+  if (location.hash) {
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+
+  async function api(path, body) {
+    const res = await fetch(path, body
+      ? { method: "POST", headers: { "X-Instructor-Key": key, "Content-Type": "application/json" }, body: JSON.stringify(body) }
+      : { headers: { "X-Instructor-Key": key } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(data.error || "HTTP " + res.status), { status: res.status, data });
+    return data;
+  }
+
+  async function open() {
+    try {
+      const { lectures } = await api("/instructor/api/lectures");
+      try { sessionStorage.setItem("nova:instructorKey", key); } catch (_) {}
+      $("login").hidden = true; $("app").hidden = false;
+      const sel = $("lectures");
+      sel.replaceChildren(...lectures.map((l) => el("option", { value: l.lecture_id, textContent: `${l.title || l.lecture_id} (${l.questions})` })));
+      if (wantLecture) {
+        // Opened from Nova: show that lecture, even if nobody has asked about it yet.
+        if (!lectures.some((l) => l.lecture_id === wantLecture)) {
+          sel.prepend(el("option", { value: wantLecture, textContent: "This lecture (no questions yet)" }));
+        }
+        sel.value = wantLecture;
+      }
+      if (!sel.options.length) return $("detail").replaceChildren(el("div", { className: "card muted", textContent: "No questions yet. Lectures appear here once students start asking Nova." }));
+      load();
+    } catch (e) {
+      $("login").hidden = false; $("app").hidden = true;
+      $("loginErr").hidden = false; $("loginErr").textContent = e.status === 403 ? e.message : "That key didn't work.";
+    }
+  }
+
+  function timeline(times, duration) {
+    const end = Math.max(duration || 0, ...times.map((x) => x + 1), 60);
+    const n = Math.min(40, Math.max(6, Math.ceil(end / 60))), size = end / n, counts = new Array(n).fill(0);
+    times.forEach((x) => counts[Math.min(n - 1, Math.floor(x / size))]++);
+    const peak = Math.max(...counts), at = counts.indexOf(peak);
+    const bars = counts.map((c, i) => { const b = el("div", { className: "bar" + (c === peak && c ? " peak" : ""), title: `${fmt(i * size)}–${fmt((i + 1) * size)}: ${c}` }); b.style.height = c ? Math.max(6, Math.round(c / peak * 100)) + "%" : "3px"; return b; });
+    return el("div", { className: "card" }, el("b", { textContent: "Where students get stuck" }),
+      el("div", { className: "muted", textContent: `Busiest: ${fmt(at * size)}–${fmt((at + 1) * size)} (${peak} questions)` }),
+      el("div", { className: "bars" }, bars),
+      el("div", { className: "axis" }, el("span", { textContent: "0:00" }), el("span", { textContent: fmt(end / 2) }), el("span", { textContent: fmt(end) })));
+  }
+
+  async function load() {
+    const id = $("lectures").value;
+    $("recitStatus").hidden = true;
+    $("detail").replaceChildren(el("div", { className: "card muted", textContent: "Loading…" }));
+    try {
+      current = await api("/instructor/api/lecture?lecture_id=" + encodeURIComponent(id));
+      const max = Math.max(1, ...current.topics.map((t) => t.count));
+      if (!current.total_questions) {
+        return $("detail").replaceChildren(el("div", { className: "card muted", textContent: "No questions yet for this lecture. Topics appear here once students start asking Nova about it." }));
+      }
+      $("detail").replaceChildren(
+        el("div", { className: "card stats" },
+          el("div", { className: "stat" }, el("b", { textContent: current.total_questions }), "questions"),
+          el("div", { className: "stat" }, el("b", { textContent: current.topics.length }), "topics")),
+        ...((current.question_times || []).length ? [timeline(current.question_times, 0)] : []), // no stray "null" text
+        ...current.topics.map((t, i) => {
+          const heat = el("div", { className: "heat" }, el("i")); heat.firstChild.style.width = Math.max(8, Math.round(t.count / max * 100)) + "%";
+          return el("div", { className: "card topic" },
+            el("h3", {}, el("span", { textContent: `${i + 1}. ${t.title}` }), el("span", { className: "muted", textContent: `${t.count} question${t.count === 1 ? "" : "s"}` })),
+            heat, t.summary ? el("p", { textContent: t.summary }) : null,
+            el("div", { className: "muted" }, "Around ", el("span", { className: "time", textContent: fmt(t.time) })),
+            t.examples.length ? el("ul", {}, t.examples.map((e) => el("li", { textContent: e }))) : null);
+        }));
+    } catch (e) { $("detail").replaceChildren(el("div", { className: "card err", textContent: "Couldn't load this lecture: " + e.message })); }
+  }
+
+  function csv() {
+    if (!current) return;
+    const q = (s) => '"' + String(s).replace(/"/g, '""') + '"';
+    const rows = [["topic", "questions", "time", "summary"], ...current.topics.map((t) => [t.title, t.count, fmt(t.time), t.summary])];
+    const a = el("a", { href: URL.createObjectURL(new Blob([rows.map((r) => r.map(q).join(",")).join("\n")], { type: "text/csv" })), download: "nova-topics.csv" });
+    document.body.append(a); a.click(); a.remove();
+  }
+
+  function planText(p) {
+    let at = 0;
+    const lines = [p.title, p.goal ? "Goal: " + p.goal : ""];
+    for (const b of p.blocks) { lines.push("", `${at}-${at + b.minutes} min  ${b.title}`, "  " + b.activity, "  " + b.details); at += b.minutes; }
+    if (p.ta_notes) lines.push("", "Notes for TAs: " + p.ta_notes);
+    return lines.filter((l, i) => l || i).join("\n");
+  }
+
+  function showPlan(p) {
+    let at = 0;
+    const blocks = p.blocks.map((b) => { const row = el("div", { className: "blk" }, el("div", { className: "mins", textContent: `${at}–${at + b.minutes} min` }),
+      el("div", {}, el("b", { textContent: b.title }), el("i", { textContent: b.activity }), b.details ? el("p", { textContent: b.details }) : null,
+        b.lecture_time != null ? el("p", { className: "muted", textContent: "Rewatch at " + fmt(b.lecture_time) }) : null)); at += b.minutes; return row; });
+    const copy = el("button", { textContent: "Copy as text" });
+    copy.onclick = async () => { try { await navigator.clipboard.writeText(planText(p)); copy.textContent = "Copied"; } catch (_) { copy.textContent = "Copy failed"; } };
+    document.getElementById("planCard")?.remove();
+    $("detail").prepend(el("div", { className: "card plan", id: "planCard" }, el("h3", { textContent: p.title }), p.goal ? el("div", { className: "goal", textContent: p.goal }) : null,
+      ...blocks, p.ta_notes ? el("p", { className: "muted", textContent: "Notes for TAs: " + p.ta_notes }) : null, copy));
+  }
+
+  async function exportRecitation() {
+    const btn = $("recit"), status = $("recitStatus"), id = $("lectures").value;
+    if (!id) return;
+    btn.disabled = true; status.hidden = false; status.className = "card muted"; status.textContent = "Building the plan and emailing it…";
+    try {
+      const out = await api("/instructor/api/recitation", { lecture_id: id });
+      status.className = "card ok"; status.textContent = "Recitation plan sent to " + out.to.join(", ") + ".";
+      showPlan(out.plan);
+    } catch (e) {
+      status.className = "card err"; status.textContent = e.message;
+      if (e.data && e.data.plan) showPlan(e.data.plan); // email failed or isn't set up: the plan is still usable
+    } finally { btn.disabled = false; }
+  }
+
+  $("go").onclick = () => { key = $("key").value.trim(); open(); };
+  $("key").onkeydown = (e) => { if (e.key === "Enter") $("go").click(); };
+  $("lectures").onchange = load; $("reload").onclick = load; $("csv").onclick = csv; $("recit").onclick = exportRecitation;
+  if (key) open();
+})();
+</script>
+</body>
+</html>

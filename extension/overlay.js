@@ -174,7 +174,130 @@
    * @param {() => void} opts.onStopSpeaking
    * @param {() => void} opts.onOpenTopics  the Hot topics view was opened
    * @param {() => void} opts.onRefreshTopics  "Refresh" pressed in the Hot topics view
+   * @param {(key: string) => void} opts.onInstructorUnlock  instructor key submitted
+   * @param {() => void} opts.onOpenDashboard  "Open instructor dashboard"
+   * @param {() => void} opts.onExitInstructor  "Exit instructor view"
    */
+
+  // ── Canvas starfield (card-scale) ──────────────────────────────────────────
+  function initStarfield(canvas) {
+    const ctx = canvas.getContext("2d");
+    let W, H, stars, meteors, animId, lastMeteorTime;
+
+    function rand(min, max) { return min + Math.random() * (max - min); }
+
+    function initStars() {
+      W = canvas.offsetWidth;
+      H = canvas.offsetHeight;
+      canvas.width = W;
+      canvas.height = H;
+      stars = Array.from({ length: 90 }, () => ({
+        x: rand(0, W),
+        y: rand(0, H),
+        r: rand(0.4, 2.0),
+        opacity: rand(0.4, 0.9),
+        speed: rand(0.0003, 0.001),
+        phase: rand(0, Math.PI * 2),
+      }));
+      meteors = [];
+      lastMeteorTime = performance.now();
+    }
+
+    function spawnMeteor(now) {
+      meteors.push({
+        x: rand(W * 0.1, W * 0.9),
+        y: rand(0, H * 0.33),
+        length: rand(60, 120),
+        angle: rand(0.3, 0.6),  // radians, shallow diagonal
+        speed: rand(3, 6),
+        opacity: 1,
+        born: now,
+      });
+    }
+
+    function draw(now) {
+      animId = requestAnimationFrame(draw);
+      ctx.clearRect(0, 0, W, H);
+
+      // Galaxy smear — drifting radial gradient
+      const gx = W * 0.5 + Math.sin(now * 0.00008) * W * 0.15;
+      const gy = H * 0.4 + Math.cos(now * 0.00006) * H * 0.1;
+      const gr = W * 0.3;
+      const grd = ctx.createRadialGradient(gx, gy, 0, gx, gy, gr);
+      grd.addColorStop(0, "rgba(124,58,237,0.07)");
+      grd.addColorStop(0.5, "rgba(103,232,249,0.03)");
+      grd.addColorStop(1, "transparent");
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, W, H);
+
+      // Stars with twinkle
+      for (const s of stars) {
+        const twinkle = s.opacity * (0.6 + 0.4 * Math.sin(s.phase + now * s.speed * 1000));
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(240,230,255,${twinkle.toFixed(3)})`;
+        ctx.fill();
+      }
+
+      // Spawn meteors on interval
+      const nextSpawn = rand(500, 1500);
+      if (now - lastMeteorTime > nextSpawn) {
+        spawnMeteor(now);
+        lastMeteorTime = now;
+      }
+
+      // Draw meteors
+      meteors = meteors.filter(m => {
+        const age = now - m.born;
+        const fade = Math.max(0, 1 - age / 600);
+        if (fade <= 0) return false;
+
+        const dx = Math.cos(m.angle) * m.length;
+        const dy = Math.sin(m.angle) * m.length;
+        const tail = ctx.createLinearGradient(m.x, m.y, m.x + dx, m.y + dy);
+        tail.addColorStop(0, `rgba(255,255,255,0)`);
+        tail.addColorStop(1, `rgba(255,255,255,${(fade * 0.7).toFixed(3)})`);
+
+        ctx.beginPath();
+        ctx.moveTo(m.x, m.y);
+        ctx.lineTo(m.x + dx, m.y + dy);
+        ctx.strokeStyle = tail;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Bright core dot at head
+        ctx.beginPath();
+        ctx.arc(m.x + dx, m.y + dy, 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${(fade * 0.9).toFixed(3)})`;
+        ctx.fill();
+
+        // Glow halo
+        const halo = ctx.createRadialGradient(m.x + dx, m.y + dy, 0, m.x + dx, m.y + dy, 6);
+        halo.addColorStop(0, `rgba(167,139,250,${(fade * 0.4).toFixed(3)})`);
+        halo.addColorStop(1, "transparent");
+        ctx.fillStyle = halo;
+        ctx.beginPath();
+        ctx.arc(m.x + dx, m.y + dy, 6, 0, Math.PI * 2);
+        ctx.fill();
+
+        m.x += Math.cos(m.angle) * m.speed;
+        m.y += Math.sin(m.angle) * m.speed;
+        return true;
+      });
+    }
+
+    initStars();
+    animId = requestAnimationFrame(draw);
+
+    // Sync canvas size to card on resize
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(animId);
+      initStars();
+      animId = requestAnimationFrame(draw);
+    });
+    ro.observe(canvas.parentElement);
+  }
+
   function create(opts) {
     const o = Object.assign(
       {
@@ -204,6 +327,9 @@
         onLayoutChange() {},
         onOpenTopics() {},
         onRefreshTopics() {},
+        onInstructorUnlock() {},
+        onOpenDashboard() {},
+        onExitInstructor() {},
       },
       opts
     );
@@ -241,6 +367,10 @@
     const clearItem = menuItem("trash", "Delete this chat", "clear");
     const chatList = h("div", { class: "menu-chats" });
     const subtitlesItem = menuItem("captions", "Subtitles…", "subtitles");
+    // Instructor view: Hot topics is instructor-only (unlocked with a key, remembered in this browser).
+    const instructorItem = menuItem("list", "Instructor view…", "instructor");
+    const exitInstructorItem = menuItem("minimize", "Exit instructor view", "exit-instructor");
+    exitInstructorItem.hidden = true;
     downloadItem.disabled = true;
     const menu = h(
       "div",
@@ -254,7 +384,9 @@
       subtitlesItem,
       downloadItem,
       reloadItem,
-      clearItem
+      clearItem,
+      instructorItem,
+      exitInstructorItem
     );
     const menuBtn = h(
       "button",
@@ -330,7 +462,7 @@
       h(
         "div",
         { class: "voice-main" },
-        h("div", { class: "voice-text" }, h("b", { text: "🔊 Spoken translation" }), voiceNote),
+        h("div", { class: "voice-text" }, h("b", { text: "Spoken translation" }), voiceNote),
         voiceSwitch
       ),
       audioRow
@@ -360,10 +492,11 @@
     // ---- Hot topics: strip pill + a view that swaps in for the chat ----------------
     const topicsBtn = h(
       "button",
-      { class: "topics-btn", type: "button", "aria-label": "Hot topics in this lecture", title: "What students ask about most" },
-      h("span", { class: "topics-flame", "aria-hidden": "true", text: "🔥" }),
-      h("span", { text: "Hot topics" })
+      { class: "topics-btn", type: "button", "aria-label": "Hot topics: open the instructor dashboard for this lecture", title: "Opens the instructor dashboard (new tab)" },
+      h("span", { text: "Hot topics" }),
+      h("span", { class: "topics-ext", "aria-hidden": "true", text: "↗" })
     );
+    topicsBtn.hidden = true; // instructor-only: shown by setInstructor(true)
     const contextStrip = h("div", { class: "context" }, topicsBtn, h("span", { class: "ctx-text" }), subBtn, pop);
 
     const topicsBack = h("button", { class: "topics-back", type: "button", text: "← Back to chat" });
@@ -371,6 +504,38 @@
     const topicsBody = h("div", { class: "topics-body" });
     const topicsUpdated = h("span", { class: "topics-updated" });
     const topicsRefresh = h("button", { class: "topics-refresh", type: "button", text: "↻ Refresh" });
+    // ---- Instructor login: a small view that swaps in for the chat -----------------
+    const instrBack = h("button", { class: "topics-back", type: "button", text: "← Back to chat" });
+    const instrInput = h("input", {
+      class: "instr-input",
+      type: "password",
+      placeholder: "Instructor key",
+      "aria-label": "Instructor key",
+      autocomplete: "off",
+      spellcheck: "false",
+    });
+    const instrUnlock = h("button", { class: "instr-unlock", type: "submit", text: "Unlock" });
+    const instrError = h("p", { class: "instr-error", role: "alert", hidden: true });
+    const instrForm = h("form", { class: "instr-form" }, instrInput, instrUnlock);
+    const instructorView = h(
+      "section",
+      { class: "topics instructor", "aria-label": "Instructor view" },
+      h(
+        "div",
+        { class: "topics-head" },
+        instrBack,
+        h("h3", { class: "topics-title", text: "Instructor view" }),
+        h("p", { class: "topics-sub", text: "For instructors: see what students ask about most in each lecture. Students don't need this." })
+      ),
+      h(
+        "div",
+        { class: "topics-body instr-body" },
+        h("p", { class: "instr-text", text: "Enter the instructor key your team gave you. Nova remembers it in this browser." }),
+        instrForm,
+        instrError
+      )
+    );
+
     const topicsView = h(
       "section",
       { class: "topics", "aria-label": "Hot topics in this lecture" },
@@ -378,7 +543,7 @@
         "div",
         { class: "topics-head" },
         topicsBack,
-        h("h3", { class: "topics-title" }, h("span", { "aria-hidden": "true", text: "🔥 " }), "Hot topics in this lecture"),
+        h("h3", { class: "topics-title" }, "Hot topics in this lecture"),
         topicsSub
       ),
       topicsBody,
@@ -400,7 +565,7 @@
       const parts = [planet()];
       if (!lang) parts.push(h("span", { text: "Subtitles: Off" }));
       else if (translating) parts.push(h("span", { text: shortCode(lang.code) }), progressRing(pct), h("span", { text: `${pct}%` }));
-      else parts.push(h("span", { text: `${shortCode(lang.code)} · ${sub.voice ? "🔊 Voice" : sub.mode === "dual" ? "Dual" : "Translated"}` }));
+      else parts.push(h("span", { text: `${shortCode(lang.code)} · ${sub.voice ? "Voice" : sub.mode === "dual" ? "Dual" : "Translated"}` }));
       parts.push(h("span", { class: "chev", "aria-hidden": "true", text: "▾" }));
       subBtn.replaceChildren(...parts);
       subBtn.setAttribute("aria-label", lang ? `Translated subtitles: ${lang.label}` : "Translated subtitles: off");
@@ -500,12 +665,18 @@
       header,
       contextStrip,
       topicsView,
+      instructorView,
       messages,
       chips,
       voiceBar,
       composer,
       footer
     );
+    const starCanvas = document.createElement("canvas");
+    starCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;display:block;";
+    card.prepend(starCanvas);
+    initStarfield(starCanvas);
+
     const launcher = h("button", { class: "launcher", type: "button", "aria-label": "Open Nova", title: "Ask Nova" }, avatar("launch"));
     card.dataset.view = "chat";
     const app = h("div", { class: "nova", "data-minimized": "false" }, card, launcher);
@@ -582,7 +753,7 @@
       event.preventDefault();
       const value = input.value;
       if (!value.trim() || busy) return;
-      if (card.dataset.view === "topics") setView("chat"); // asking from Hot topics goes back to the chat
+      if (card.dataset.view !== "chat") setView("chat"); // asking from another view goes back to the chat
       input.value = "";
       updateSendState();
       submit(value, "input");
@@ -622,6 +793,8 @@
       if (item.dataset.action === "notes-html") o.onExportNotes("html");
       if (item.dataset.action === "chat") o.onSwitchChat(item.dataset.id);
       if (item.dataset.action === "subtitles") setPopOpen(true);
+      if (item.dataset.action === "instructor") showInstructorLogin();
+      if (item.dataset.action === "exit-instructor") o.onExitInstructor();
     });
     // Close the menu / subtitles popover on any click outside them (inside or outside the overlay).
     shadow.addEventListener("click", (event) => {
@@ -793,6 +966,31 @@
       if (view === "chat") scrollToBottom();
     }
 
+    function showInstructorLogin() {
+      api.restore();
+      setView("instructor");
+      instrError.hidden = true;
+      instrInput.value = "";
+      setInstructorBusy(false);
+      instrInput.focus({ preventScroll: true });
+    }
+
+    function setInstructorBusy(on) {
+      instrUnlock.disabled = on;
+      instrInput.disabled = on;
+      instrUnlock.textContent = on ? "Checking…" : "Unlock";
+    }
+
+    instrForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const key = instrInput.value.trim();
+      if (!key) return instrInput.focus();
+      instrError.hidden = true;
+      setInstructorBusy(true);
+      o.onInstructorUnlock(key);
+    });
+    instrBack.addEventListener("click", () => setView("chat"));
+
     function ago(epochSeconds) {
       const mins = Math.max(0, Math.round((Date.now() / 1000 - epochSeconds) / 60));
       if (mins < 1) return "just now";
@@ -817,7 +1015,22 @@
         ),
         heat,
         t.summary ? h("p", { class: "topic-summary", text: t.summary }) : null,
-        h("button", { class: "topic-seek", type: "button", title: "Jump to this part of the lecture", onclick: () => o.onSeek(t.time) }, `▶ ${fmt(t.time)}`)
+        h(
+          "div",
+          { class: "topic-actions" },
+          h("button", { class: "topic-seek", type: "button", title: "Jump to this part of the lecture", onclick: () => o.onSeek(t.time) }, `▶ ${fmt(t.time)}`),
+          // Opens the whiteboard lesson on this theme (same path as Deep Dive on a reply).
+          h(
+            "button",
+            {
+              class: "topic-teach",
+              type: "button",
+              title: "Open a whiteboard lesson on this topic",
+              onclick: () => o.onExplain({ question: `Teach me: ${t.title}`, text: t.summary || t.title, time: t.time }),
+            },
+            "🎓 Teach me this"
+          )
+        )
       );
       if (t.examples && t.examples.length) {
         item.append(h("ul", { class: "topic-examples" }, t.examples.map((e) => h("li", { text: e }))));
@@ -825,22 +1038,58 @@
       return item;
     }
 
+    // Hot topics opens the instructor dashboard (all lectures, timeline, CSV export) on this lecture.
     topicsBtn.addEventListener("click", () => {
       setMenuOpen(false);
       setPopOpen(false);
-      if (card.dataset.view === "topics") return setView("chat");
-      setView("topics");
-      topicsBack.focus({ preventScroll: true }); // keyboard focus moves into the view (Escape goes back)
-      o.onOpenTopics();
+      o.onOpenDashboard();
     });
+    /** Count question times into equal slices of the lecture. Pure, so it's easy to reason about. */
+    function bucketTimes(times, duration, maxBars = 24) {
+      const end = Math.max(Number(duration) || 0, ...times.map((x) => x + 1), 60);
+      const bars = Math.min(maxBars, Math.max(6, Math.ceil(end / 60)));
+      const size = end / bars;
+      const counts = new Array(bars).fill(0);
+      for (const x of times) counts[Math.min(bars - 1, Math.floor(x / size))]++;
+      return { counts, size, end };
+    }
+
+    /** "Where students get stuck": questions per slice of the lecture. Click a bar to jump there. */
+    function timelineCard(times, duration) {
+      const fmt = root.NovaSRT ? root.NovaSRT.formatTime : (x) => String(Math.floor(x));
+      const { counts, size, end } = bucketTimes(times, duration);
+      const peak = Math.max(...counts);
+      const bars = counts.map((n, i) => {
+        const from = i * size;
+        const bar = h("button", {
+          class: "tl-bar" + (n === peak && n > 0 ? " peak" : ""),
+          type: "button",
+          title: `${fmt(from)}–${fmt(Math.min(end, from + size))}: ${n} question${n === 1 ? "" : "s"}`,
+          "aria-label": `${fmt(from)}, ${n} question${n === 1 ? "" : "s"}. Jump here`,
+          onclick: () => o.onSeek(from),
+        }, h("i"));
+        bar.firstChild.style.height = n ? `${Math.max(8, Math.round((n / peak) * 100))}%` : "3px";
+        return bar;
+      });
+      const at = counts.indexOf(peak);
+      return h(
+        "section",
+        { class: "timeline", "aria-label": "Questions across the lecture" },
+        h("h4", { class: "tl-title", text: "Where students get stuck" }),
+        h("p", { class: "tl-peak", text: `Most questions: ${fmt(at * size)}–${fmt(Math.min(end, (at + 1) * size))} (${peak})` }),
+        h("div", { class: "tl-bars" }, bars),
+        h("div", { class: "tl-axis" }, h("span", { text: fmt(0) }), h("span", { text: fmt(end / 2) }), h("span", { text: fmt(end) }))
+      );
+    }
+
     topicsBack.addEventListener("click", () => setView("chat"));
     topicsRefresh.addEventListener("click", () => o.onRefreshTopics());
 
     function onKey(event) {
       if (event.key !== "Escape") return;
-      if (card.dataset.view === "topics" && pop.hidden && menu.hidden) {
+      if ((card.dataset.view === "topics" || card.dataset.view === "instructor") && pop.hidden && menu.hidden) {
         setView("chat");
-        topicsBtn.focus();
+        if (!topicsBtn.hidden) topicsBtn.focus();
         return;
       }
       if (!pop.hidden) {
@@ -923,6 +1172,22 @@
       },
 
       showChat: () => setView("chat"),
+
+      /** Instructor view on/off: shows or hides Hot topics and the instructor menu items. */
+      setInstructor(on) {
+        topicsBtn.hidden = !on;
+        instructorItem.hidden = Boolean(on);
+        exitInstructorItem.hidden = !on;
+        if (!on && card.dataset.view === "topics") setView("chat");
+      },
+      showInstructorLogin,
+      /** Result of checking a key: { error } shows it in the login view; {} just resets the button. */
+      setInstructorLogin({ error = "" } = {}) {
+        setInstructorBusy(false);
+        instrError.hidden = !error;
+        instrError.textContent = error;
+        if (error) instrInput.focus({ preventScroll: true });
+      },
       showTopics() {
         api.restore();
         setView("topics");
@@ -934,8 +1199,9 @@
        * Fill the Hot topics view.
        * state: "loading" | "ready" | "empty" | "error"
        * topics: [{ title, summary, count, time, examples }], total: questions asked, updatedAt: epoch seconds
+       * times: video seconds of every question (draws the timeline), duration: lecture length in seconds
        */
-      setTopics({ state, topics = [], total = 0, updatedAt = null, error = "" } = {}) {
+      setTopics({ state, topics = [], total = 0, updatedAt = null, error = "", times = [], duration = 0 } = {}) {
         topicsRefresh.disabled = state === "loading";
         topicsUpdated.textContent = updatedAt && state === "ready" ? `Updated ${ago(updatedAt)}` : "";
         if (state === "loading") {
@@ -965,7 +1231,7 @@
         } else {
           topicsSub.textContent = `From ${total} question${total === 1 ? "" : "s"} students asked Nova. Example questions are reworded.`;
           const maxCount = Math.max(1, ...topics.map((t) => t.count));
-          topicsBody.replaceChildren(...topics.map((t, i) => topicCard(t, i, maxCount)));
+          topicsBody.replaceChildren(...(times.length ? [timelineCard(times, duration)] : []), ...topics.map((t, i) => topicCard(t, i, maxCount)));
         }
       },
 
@@ -1103,5 +1369,5 @@
     return api;
   }
 
-  root.NovaOverlay = { create, installKeyGuard };
+  root.NovaOverlay = { create, installKeyGuard, alienSvg }; // alienSvg is reused by the subtitle pill
 })(globalThis);

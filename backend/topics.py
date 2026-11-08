@@ -88,6 +88,23 @@ class QuestionStore:
             ).fetchall()
         return [dict(r) for r in reversed(rows)]
 
+    def lectures(self):
+        """Every lecture that has had a question, newest activity first (found from the questions themselves)."""
+        with self._db() as db:
+            rows = db.execute(
+                """SELECT lecture_id, MAX(title) AS title, COUNT(*) AS questions, MAX(asked_at) AS last_asked
+                   FROM questions GROUP BY lecture_id ORDER BY last_asked DESC"""
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def times(self, lecture_id, limit=MAX_QUESTIONS):
+        """Video times (seconds) of the newest questions: the "where students get stuck" timeline."""
+        with self._db() as db:
+            rows = db.execute(
+                "SELECT video_time FROM questions WHERE lecture_id = ? ORDER BY id DESC LIMIT ?", (lecture_id, limit)
+            ).fetchall()
+        return sorted(round(float(r[0] or 0), 1) for r in rows)
+
     def cached(self, lecture_id):
         with self._db() as db:
             row = db.execute("SELECT * FROM topics_cache WHERE lecture_id = ?", (lecture_id,)).fetchone()
@@ -151,14 +168,15 @@ def build_themes(questions, title, complete):
 
 
 def topics(body, store, complete, now=None):
-    """POST /topics -> {"status": "ok"|"empty", "topics": [...], "total_questions": n, "updated_at": epoch}"""
+    """POST /topics -> {"status": "ok"|"empty", "topics": [...], "total_questions": n, "updated_at": epoch,
+    "question_times": [video seconds of each question, sorted]}"""
     now = now or time.time()
     lecture_id = str(body.get("lecture_id") or "")
     if not lecture_id:
         raise ValueError("lecture_id is required")
     total = store.count(lecture_id)
     if total == 0:
-        return {"status": "empty", "topics": [], "total_questions": 0, "updated_at": now}
+        return {"status": "empty", "topics": [], "total_questions": 0, "updated_at": now, "question_times": []}
 
     cache = store.cached(lecture_id)
     fresh = cache and (
@@ -167,11 +185,11 @@ def topics(body, store, complete, now=None):
     )
     # Refresh only rebuilds when there's something new, so repeated clicks don't cost model calls.
     if fresh and not (body.get("refresh") and cache["question_count"] != total):
-        return {"status": "ok", "topics": cache["themes"], "total_questions": total, "updated_at": cache["built_at"]}
+        return {"status": "ok", "topics": cache["themes"], "total_questions": total, "updated_at": cache["built_at"], "question_times": store.times(lecture_id)}
 
     questions = store.questions(lecture_id)
     title = next((q["title"] for q in reversed(questions) if q["title"]), "")
     themes = build_themes(questions, title, complete)
     store.save_cache(lecture_id, themes, total, now)
     print(f"topics {lecture_id}: {len(themes)} themes from {len(questions)} questions")
-    return {"status": "ok", "topics": themes, "total_questions": total, "updated_at": now}
+    return {"status": "ok", "topics": themes, "total_questions": total, "updated_at": now, "question_times": store.times(lecture_id)}

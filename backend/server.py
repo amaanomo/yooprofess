@@ -17,6 +17,9 @@ Endpoints (see the "Backend contract" in extension/content.js):
   POST /translate  translate a batch of caption cues for the subtitle overlay
   POST /summary    summary, key points and timestamped chapters for a lecture
   POST /explain    whiteboard lesson plan
+  GET  /instructor instructor dashboard (needs NOVA_INSTRUCTOR_KEY): lectures, themes, question timeline
+  POST /instructor/api/recitation  build a 50-minute recitation plan and email it (see recitation.py for NOVA_SMTP_* and NOVA_RECITATION_EMAIL)
+                   POST /topics needs the same key (X-Instructor-Key header): Hot topics is instructor-only
   POST /topics     hot topics: the lecture's most-asked themes (see topics.py; set NOVA_DB_PATH on Railway)
   GET  /voices     built-in ElevenLabs voices (the ones every plan can use)
   POST /tts        {text, voice_id?, language_code?} -> audio/mpeg (ElevenLabs, English only)
@@ -32,6 +35,7 @@ was spoken: answer briefly for text-to-speech). The extension uses ElevenLabs wh
 server has a key ("auto" engine) and falls back to free Chrome voices otherwise.
 """
 import base64
+import hmac
 import json
 import os
 import re
@@ -47,6 +51,7 @@ try:  # local dev: read keys from .env (Railway sets real env vars)
 except ImportError:
     pass
 
+import recitation
 import topics as hot_topics
 
 PORT = int(os.environ.get("PORT", "8000"))
@@ -140,6 +145,9 @@ def complete(system, user, max_tokens, json_output=False, image_b64=None, histor
     return "".join(b.text for b in msg.content if b.type == "text").strip()
 
 
+INSTRUCTOR_KEY = os.environ.get("NOVA_INSTRUCTOR_KEY", "")  # unset = the instructor dashboard is off
+INSTRUCTOR_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "instructor.html")
+RECITATION_STATE = {"plans": {}, "sent": {}}  # cached plans + per-lecture send times (in memory)
 LECTURES = {}  # lecture_id -> {"title": str, "captions": [...]}
 STORE = hot_topics.QuestionStore()  # anonymous question log for Hot topics (SQLite at NOVA_DB_PATH)
 TRANSLATIONS = {}  # (lecture_id, language_code, cue_index) -> translated text. In memory: lost on restart.
@@ -777,7 +785,7 @@ class Handler(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Instructor-Key")
 
     def _send_bytes(self, code, data, content_type):
         self.send_response(code)
@@ -814,8 +822,42 @@ class Handler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
 
+    def _instructor_denied(self):
+        """Hot topics and the dashboard are for instructors only: they need the X-Instructor-Key header.
+        Sends the 403/401 and returns True when access is refused."""
+        if not INSTRUCTOR_KEY:
+            self._send(403, {"error": "instructor view is off: set NOVA_INSTRUCTOR_KEY"})
+            return True
+        given = self.headers.get("X-Instructor-Key", "")
+        if not hmac.compare_digest(given.encode(), INSTRUCTOR_KEY.encode()):
+            self._send(401, {"error": "wrong or missing instructor key"})
+            return True
+        return False
+
+    def _instructor(self, url):
+        """GET /instructor (page) and /instructor/api/* (JSON, needs NOVA_INSTRUCTOR_KEY)."""
+        if url.path == "/instructor":
+            with open(INSTRUCTOR_PAGE, "rb") as f:
+                return self._send_bytes(200, f.read(), "text/html; charset=utf-8")
+        if self._instructor_denied():
+            return None
+        if url.path == "/instructor/api/lectures":
+            return self._send(200, {"lectures": STORE.lectures()})
+        if url.path == "/instructor/api/lecture":
+            lecture_id = urllib.parse.parse_qs(url.query).get("lecture_id", [""])[0]
+            if not lecture_id:
+                return self._send(400, {"error": "lecture_id is required"})
+            data = hot_topics.topics({"lecture_id": lecture_id}, STORE, complete)
+            known = next((l for l in STORE.lectures() if l["lecture_id"] == lecture_id), {})
+            data["title"] = known.get("title") or (LECTURES.get(lecture_id) or {}).get("title") or lecture_id
+            return self._send(200, data)
+        return self._send(404, {"error": "not found"})
+
     def do_GET(self):
         try:
+            url = urllib.parse.urlparse(self.path)
+            if url.path == "/instructor" or url.path.startswith("/instructor/"):
+                return self._instructor(url)
             if self.path == "/voices":
                 return self._send(200, list_voices())
             if self.path in ("/", "/health"):
@@ -837,6 +879,17 @@ class Handler(BaseHTTPRequestHandler):
                 content_type = (self.headers.get("Content-Type") or "audio/webm").split(";")[0].strip()
                 return self._send(200, {"text": transcribe(raw, content_type)})
             body = json.loads(raw or b"{}")
+            if self.path == "/instructor/api/recitation":
+                if self._instructor_denied():
+                    return
+                lecture_id = str(body.get("lecture_id") or "")
+                if not lecture_id:
+                    raise BadRequest("lecture_id is required")
+                data = hot_topics.topics({"lecture_id": lecture_id}, STORE, complete)
+                known = next((l for l in STORE.lectures() if l["lecture_id"] == lecture_id), {})
+                title = known.get("title") or (LECTURES.get(lecture_id) or {}).get("title") or ""
+                code, out = recitation.export_plan(lecture_id, title, data, complete, RECITATION_STATE)
+                return self._send(code, out)
             if self.path == "/tts":
                 return self._send_bytes(200, tts(body), "audio/mpeg")
             if self.path == "/tts/stream":
@@ -858,6 +911,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/explain":
                 return self._send(200, explain(body))
             if self.path == "/topics":
+                if self._instructor_denied():  # Hot topics is instructor-only
+                    return None
                 return self._send(200, hot_topics.topics(body, STORE, complete))
             self._send(404, {"error": "not found"})
         except (BadRequest, ValueError) as e:

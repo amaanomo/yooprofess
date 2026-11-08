@@ -149,9 +149,17 @@ The reply shows as a message with clickable chapters that seek the video. It's s
 - Screenshots need the browser to allow reading the video frame (the same condition as vision questions). If it doesn't, the notes are text only.
 - Failed replies and unanswered questions are left out. A second summary replaces the first.
 
-## Hot topics
+## Hot topics (instructors only)
 
-The **🔥 Hot topics** pill (left of the strip under the header) swaps the chat for a view of what students ask about most **in this lecture**: up to 6 themes, each with how many questions it covers, a one-line summary, a ▶ timestamp that jumps to where it comes up, and 2–3 example questions **reworded by the AI** (no student's exact words are shown). With no questions yet, it says "No questions yet". **← Back to chat**, Escape, or asking a question returns to the chat.
+**Students never see Hot topics.** It's for the instructor, unlocked with one shared key (no logins):
+
+1. Set `NOVA_INSTRUCTOR_KEY` on the backend (Railway → Variables). Pick a long random string and give it to the professor.
+2. The professor opens any lecture, then **⋯ → Instructor view…**, pastes the key, and presses **Unlock**. Nova checks it with the server and remembers it in that browser (`chrome.storage.local`, never synced).
+3. Unlocking opens the **instructor dashboard** (`/instructor`: every lecture, "Where students get stuck" timeline, themes, CSV export) on the lecture being watched. From then on, that browser shows a **Hot topics ↗** button on every lecture that opens the dashboard on that lecture, and the ⋯ menu has **Exit instructor view** (forgets the key). The key and lecture travel in the URL's `#fragment`, which isn't sent to the server, and the page removes it from the address bar.
+
+The server enforces it: `POST /topics` and the dashboard API need the `X-Instructor-Key` header (401 for a wrong or missing key, 403 if `NOVA_INSTRUCTOR_KEY` isn't set). A wrong key is never covered up by the demo data (`MOCK_TOPICS`). If the key is changed on the server, Nova drops the old one and asks for the new one. Everyone with the key sees every lecture's stats; per-course keys would be the next step for more professors.
+
+The **Hot topics** pill (left of the strip under the header) swaps the chat for a view of what students ask about most **in this lecture**: up to 6 themes, each with how many questions it covers, a one-line summary, a ▶ timestamp that jumps to where it comes up, and 2–3 example questions **reworded by the AI** (no student's exact words are shown). With no questions yet, it says "No questions yet". **← Back to chat**, Escape, or asking a question returns to the chat.
 
 - Every **typed** question is saved anonymously on the backend (question, time in the video, when it was asked; no identity). **Chip taps aren't counted.** `/ask` now carries `"source": "typed" | "chip"` and the lecture `"title"`.
 - Themes are built by the model when someone opens the view and cached; they're rebuilt after 3 new questions, or when there's anything new and the themes are 10+ minutes old. **↻ Refresh** only rebuilds when new questions have come in.

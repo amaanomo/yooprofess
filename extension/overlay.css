@@ -71,17 +71,27 @@ button:disabled {
 
 /* ---------------------------------------------------------------- card --- */
 
+/* All content panels sit above the canvas (z-index: 0) */
+.messages, .chips, .composer,
+.footer, .topics, .voice-bar {
+  position: relative;
+  z-index: 1;
+}
+
 .card {
   position: fixed;
   left: 24px;
   bottom: 24px;
-  width: min(560px, calc(100vw - 48px));
+  width: min(500px, calc(100vw - 48px));
   height: min(85vh, calc(100vh - 48px));
+  min-width: 320px;
+  max-width: min(700px, calc(100vw - 48px));
   display: flex;
   flex-direction: column;
   background: var(--space);
   border-radius: 20px;
   overflow: hidden;
+  resize: horizontal;
   box-shadow:
     0 0 0 1px rgba(124, 58, 237, 0.2),
     0 24px 64px rgba(7, 8, 15, 0.7),
@@ -99,21 +109,15 @@ button:disabled {
 
 .header {
   position: relative;
-  z-index: 2;
+  z-index: 1;
   flex: none;
   display: flex;
   align-items: center;
   gap: 14px;
   padding: 18px 18px 18px 20px;
   color: var(--white);
-  background-color: #0a0b16;
-  background-image:
-    radial-gradient(ellipse at 20% 60%, rgba(124, 58, 237, 0.28) 0%, transparent 65%),
-    radial-gradient(ellipse at 85% 20%, rgba(103, 232, 249, 0.1) 0%, transparent 50%),
-    radial-gradient(rgba(255, 255, 255, 0.55) 0.7px, transparent 1px);
-  background-size: auto, auto, 20px 20px;
-  background-position: 0 0, 0 0, 8px 5px;
-  border-bottom: 1px solid rgba(124, 58, 237, 0.2);
+  background: rgba(13, 15, 28, 0.12);
+  border-bottom: 1px solid rgba(124, 58, 237, 0.15);
 }
 
 /* Avatar */
@@ -126,7 +130,7 @@ button:disabled {
 }
 
 .has-mascot .avatar svg {
-  display: none;
+  display: none !important;
 }
 
 .has-mascot .avatar {
@@ -215,15 +219,16 @@ button:disabled {
   height: 36px;
   display: grid;
   place-items: center;
-  border: 0;
+  border: 1px solid rgba(255, 255, 255, 0.10);
   border-radius: 10px;
-  background: rgba(167, 139, 250, 0.1);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
   color: rgba(240, 230, 255, 0.8);
   transition: background-color 120ms ease;
 }
 
 .icon-btn:hover {
-  background: rgba(167, 139, 250, 0.22);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .icon-btn svg {
@@ -239,7 +244,8 @@ button:disabled {
   right: 18px;
   z-index: 5;
   width: 260px;
-  max-height: min(520px, calc(100vh - 200px)); /* stays inside the card when many chats are saved */
+  /* Use the card's full height (85vh, minus the header) so every item shows without scrolling. */
+  max-height: calc(min(85vh, 100vh - 48px) - 72px);
   overflow-y: auto;
   padding: 6px;
   background: #131629;
@@ -290,7 +296,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 10px;
+  padding: 7px 10px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -314,6 +320,9 @@ button:disabled {
   margin: 2px 0 4px;
   padding-bottom: 4px;
   border-bottom: 1px solid var(--line);
+  /* Saved chats scroll on their own, so they never push the menu's actions out of view. */
+  max-height: 150px;
+  overflow-y: auto;
 }
 
 .chats-label {
@@ -347,8 +356,8 @@ button:disabled {
   gap: 8px;
   min-height: 40px;
   padding: 5px 12px 5px 20px;
-  background: var(--space-800);
-  border-bottom: 1px solid var(--space-600);
+  background: rgba(13, 15, 28, 0.12);
+  border-bottom: 1px solid rgba(124, 58, 237, 0.10);
   color: var(--star-muted);
   font-size: 12.5px;
   font-weight: 500;
@@ -381,7 +390,8 @@ button:disabled {
   padding: 0 12px 0 8px;
   border: 1px solid rgba(251, 146, 60, 0.35);
   border-radius: 999px;
-  background: var(--space-700);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   color: #fdba74;
   font-size: 12px;
   font-weight: 700;
@@ -392,12 +402,17 @@ button:disabled {
 }
 
 .topics-btn:hover {
-  background: var(--space-600);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .topics-btn[aria-pressed="true"] {
   background: rgba(251, 146, 60, 0.16);
   border-color: rgba(251, 146, 60, 0.7);
+}
+
+.topics-ext {
+  font-size: 11px;
+  opacity: 0.8;
 }
 
 .topics-flame {
@@ -426,8 +441,85 @@ button:disabled {
 }
 
 .card[data-view="topics"] .messages,
-.card[data-view="topics"] .chips {
+.card[data-view="topics"] .chips,
+.card[data-view="instructor"] .messages,
+.card[data-view="instructor"] .chips {
   display: none !important;
+}
+
+/* The instructor login reuses the Hot topics layout but is its own view. */
+.card[data-view="topics"] .topics.instructor {
+  display: none;
+}
+
+.card[data-view="instructor"] .topics.instructor {
+  display: flex;
+}
+
+.instr-body {
+  justify-content: flex-start;
+  padding-top: 20px;
+}
+
+.instr-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--star-soft);
+}
+
+.instr-form {
+  display: flex;
+  gap: 8px;
+}
+
+.instr-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--space-600);
+  border-radius: 10px;
+  outline: 0;
+  background: var(--space-800);
+  color: var(--star);
+  font: inherit;
+  font-size: 14px;
+}
+
+.instr-input:focus {
+  border-color: var(--comet);
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.18);
+}
+
+.instr-unlock {
+  flex: none;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--nebula);
+  color: var(--white);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.instr-unlock:hover:not(:disabled) {
+  background: var(--nebula-600);
+}
+
+.instr-unlock:disabled,
+.instr-input:disabled {
+  opacity: 0.6;
+}
+
+.instr-unlock:focus-visible {
+  outline: 2px solid var(--comet);
+  outline-offset: 2px;
+}
+
+.instr-error {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--error-ink);
 }
 
 .topics-head {
@@ -473,11 +565,83 @@ button:disabled {
   padding: 14px 20px;
 }
 
-.topic {
+.timeline {
   padding: 12px 14px;
   border: 1px solid var(--space-600);
   border-radius: 14px;
   background: var(--space-800);
+}
+
+.tl-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--star);
+}
+
+.tl-peak {
+  margin: 2px 0 10px;
+  font-size: 12px;
+  color: var(--star-muted);
+}
+
+.tl-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 84px;
+}
+
+.tl-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.tl-bar i {
+  display: block;
+  width: 100%;
+  border-radius: 3px 3px 1px 1px;
+  background: var(--space-600);
+  transition: background 0.15s;
+}
+
+.tl-bar:hover i,
+.tl-bar:focus-visible i {
+  background: var(--comet);
+}
+
+.tl-bar.peak i {
+  background: linear-gradient(180deg, #fbbf24, #f97316);
+}
+
+.tl-bar:focus-visible {
+  outline: 2px solid var(--aurora);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+.tl-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--star-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.topic {
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
 
 .topic-head {
@@ -546,6 +710,28 @@ button:disabled {
   font-size: 12px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+.topic-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.topic-teach {
+  padding: 4px 10px;
+  border: 1px solid rgba(103, 232, 249, 0.35);
+  border-radius: 999px;
+  background: var(--aurora-dim);
+  color: var(--aurora);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.topic-teach:hover,
+.topic-teach:focus-visible {
+  background: rgba(103, 232, 249, 0.2);
 }
 
 .topic-seek:hover {
@@ -637,7 +823,8 @@ button:disabled {
   padding: 0 10px 0 4px;
   border: 1px solid rgba(167, 139, 250, 0.3);
   border-radius: 999px;
-  background: var(--space-700);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   color: var(--comet);
   font-size: 12px;
   font-weight: 700;
@@ -648,7 +835,7 @@ button:disabled {
 }
 
 .sub-btn:hover {
-  background: var(--space-600);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .sub-btn.off .mini-planet {
@@ -1051,15 +1238,16 @@ button:disabled {
 }
 
 .msg--nova .bubble {
-  background: var(--space-800);
-  border: 1px solid var(--space-600);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
   color: var(--star-soft);
 }
 
 .msg--student .bubble {
-  background: var(--student-bg);
+  background: rgba(124, 58, 237, 0.18);
   color: var(--student-txt);
-  border: 1px solid rgba(124, 58, 237, 0.3);
+  border: 1px solid rgba(124, 58, 237, 0.30);
 }
 
 .msg--error .bubble {
@@ -1237,9 +1425,10 @@ button:disabled {
   align-items: flex-start;
   gap: 10px;
   padding: 10px 12px;
-  border: 1px solid var(--space-600);
+  border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 12px;
-  background: var(--space-800);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
   color: var(--star-soft);
   font-size: 13px;
   line-height: 1.45;
@@ -1321,9 +1510,10 @@ button:disabled {
 .chip {
   flex: none;
   padding: 8px 14px;
-  border: 1px solid rgba(167, 139, 250, 0.4);
+  border: 1px solid rgba(167, 139, 250, 0.22);
   border-radius: 999px;
-  background: rgba(124, 58, 237, 0.08);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   color: var(--comet);
   font-size: 13px;
   font-weight: 600;
@@ -1333,7 +1523,7 @@ button:disabled {
 }
 
 .chip:hover:not(:disabled) {
-  background: rgba(124, 58, 237, 0.18);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .chip:disabled {
@@ -1349,17 +1539,18 @@ button:disabled {
   gap: 8px;
   margin: 0 20px;
   padding: 6px 6px 6px 16px;
-  border: 1px solid var(--space-600);
+  border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 14px;
-  background: var(--space-800);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
   transition:
     border-color 120ms ease,
     box-shadow 120ms ease;
 }
 
 .composer:focus-within {
-  border-color: rgba(124, 58, 237, 0.6);
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12);
+  border-color: rgba(124, 58, 237, 0.55);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
 
 .input {
@@ -1391,9 +1582,10 @@ button:disabled {
   height: 40px;
   display: grid;
   place-items: center;
-  border: 0;
+  border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 10px;
-  background: var(--space-700);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   color: var(--star-muted);
   transition:
     background-color 120ms ease,
@@ -1406,7 +1598,8 @@ button:disabled {
 }
 
 .send[data-ready="true"] {
-  background: var(--nebula);
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.75), rgba(168, 85, 247, 0.75));
+  border: 1px solid rgba(168, 85, 247, 0.6);
   color: var(--white);
   box-shadow: 0 0 10px rgba(124, 58, 237, 0.4);
 }
@@ -1485,7 +1678,10 @@ button:disabled {
   }
   .card {
     width: calc(100vw - 24px);
+    min-width: unset;
+    max-width: unset;
     height: calc(100vh - 24px);
+    resize: none;
   }
   .msg--student {
     padding-left: 40px;
@@ -1550,9 +1746,10 @@ button:disabled {
   gap: 10px;
   margin: 0 20px 8px;
   padding: 8px 8px 8px 12px;
-  border: 1px solid var(--space-600);
+  border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 12px;
-  background: var(--space-800);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
   color: var(--star-soft);
   font-size: 13px;
   font-weight: 500;
@@ -1568,15 +1765,16 @@ button:disabled {
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  border: 1px solid var(--space-600);
+  border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 8px;
-  background: var(--space-700);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   color: var(--comet);
   font-size: 12px;
   font-weight: 600;
 }
 .voice-bar-btn:hover {
-  background: var(--space-600);
+  background: rgba(255, 255, 255, 0.12);
 }
 .voice-bar-btn svg {
   width: 12px;

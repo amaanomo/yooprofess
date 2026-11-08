@@ -45,6 +45,7 @@
   const ICONS = {
     minimize: ["M6 12h12"],
     more: ["M5 12h.01", "M12 12h.01", "M19 12h.01"],
+    play: ["M6 4l14 8-14 8z"],
     captions: [
       "M3 7a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z",
       "M7 12h3",
@@ -559,10 +560,12 @@
         const { start, end, label } = msg.watch;
         const fmt = root.NovaSRT ? root.NovaSRT.formatTime : (t) => String(Math.floor(t));
         const timeStr = end && end !== start ? `${fmt(start)} – ${fmt(end)}` : fmt(start);
+        const watchPlaySvg = icon("play", "watch-play-icon");
         const watchBtn = h(
           "button",
           { class: "watch-btn", type: "button", onclick: () => o.onSeek(start) },
-          h("span", { class: "watch-btn-time", text: `▶ ${timeStr}` }),
+          watchPlaySvg,
+          h("span", { class: "watch-btn-time", text: timeStr }),
           label ? h("span", { class: "watch-btn-label", text: label }) : null
         );
         bubble.append(watchBtn);
@@ -694,6 +697,9 @@
         lastStatus = text;
         status.dataset.state = state;
         statusText.textContent = text;
+        // Cascade flip (raise from split-flap challenger).
+        statusText.classList.remove("flip");
+        requestAnimationFrame(() => statusText.classList.add("flip"));
       },
 
       setContextLabel(text) {
@@ -756,9 +762,9 @@
         if (on && !typingEl) {
           typingEl = h(
             "div",
-            { class: "msg msg--nova msg--typing", "aria-label": "Nova is typing" },
+            { class: "msg msg--nova msg--typing", "aria-label": "Nova is thinking" },
             avatar("sm"),
-            h("div", { class: "bubble typing" }, h("span"), h("span"), h("span"))
+            h("div", { class: "bubble typing" }, h("span"), h("span"), h("span"), h("span"), h("span"), h("span"), h("span"))
           );
           messages.append(typingEl);
           scrollToBottom();

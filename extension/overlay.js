@@ -172,6 +172,8 @@
    * @param {(on: boolean) => void} opts.onToggleVoice  header speaker button
    * @param {() => void} opts.onMic  composer mic button (push-to-talk)
    * @param {() => void} opts.onStopSpeaking
+   * @param {() => void} opts.onOpenTopics  the Hot topics view was opened
+   * @param {() => void} opts.onRefreshTopics  "Refresh" pressed in the Hot topics view
    */
   function create(opts) {
     const o = Object.assign(
@@ -200,6 +202,8 @@
         onOriginalAudio() {},
         onRetryTranslation() {},
         onLayoutChange() {},
+        onOpenTopics() {},
+        onRefreshTopics() {},
       },
       opts
     );
@@ -353,7 +357,33 @@
       h("p", { class: "sub-foot", text: "Panopto's own captions stay as they are; use its CC button." })
     );
     // The banner text is gone, but the strip stays: it holds the subtitles button and popover.
-    const contextStrip = h("div", { class: "context" }, h("span", { class: "ctx-text" }), subBtn, pop);
+    // ---- Hot topics: strip pill + a view that swaps in for the chat ----------------
+    const topicsBtn = h(
+      "button",
+      { class: "topics-btn", type: "button", "aria-label": "Hot topics in this lecture", title: "What students ask about most" },
+      h("span", { class: "topics-flame", "aria-hidden": "true", text: "🔥" }),
+      h("span", { text: "Hot topics" })
+    );
+    const contextStrip = h("div", { class: "context" }, topicsBtn, h("span", { class: "ctx-text" }), subBtn, pop);
+
+    const topicsBack = h("button", { class: "topics-back", type: "button", text: "← Back to chat" });
+    const topicsSub = h("p", { class: "topics-sub" });
+    const topicsBody = h("div", { class: "topics-body" });
+    const topicsUpdated = h("span", { class: "topics-updated" });
+    const topicsRefresh = h("button", { class: "topics-refresh", type: "button", text: "↻ Refresh" });
+    const topicsView = h(
+      "section",
+      { class: "topics", "aria-label": "Hot topics in this lecture" },
+      h(
+        "div",
+        { class: "topics-head" },
+        topicsBack,
+        h("h3", { class: "topics-title" }, h("span", { "aria-hidden": "true", text: "🔥 " }), "Hot topics in this lecture"),
+        topicsSub
+      ),
+      topicsBody,
+      h("div", { class: "topics-foot" }, topicsUpdated, topicsRefresh)
+    );
 
     function setPopOpen(open) {
       pop.hidden = !open;
@@ -469,6 +499,7 @@
       { class: "card", role: "dialog", "aria-label": "Ask Nova" },
       header,
       contextStrip,
+      topicsView,
       messages,
       chips,
       voiceBar,
@@ -476,6 +507,7 @@
       footer
     );
     const launcher = h("button", { class: "launcher", type: "button", "aria-label": "Open Nova", title: "Ask Nova" }, avatar("launch"));
+    card.dataset.view = "chat";
     const app = h("div", { class: "nova", "data-minimized": "false" }, card, launcher);
     shadow.append(app);
 
@@ -550,6 +582,7 @@
       event.preventDefault();
       const value = input.value;
       if (!value.trim() || busy) return;
+      if (card.dataset.view === "topics") setView("chat"); // asking from Hot topics goes back to the chat
       input.value = "";
       updateSendState();
       submit(value, "input");
@@ -706,8 +739,63 @@
       chips.hidden = list.length === 0;
     }
 
+    // ---- Hot topics view --------------------------------------------------------
+    function setView(view) {
+      card.dataset.view = view;
+      topicsBtn.setAttribute("aria-pressed", String(view === "topics"));
+      if (view === "chat") scrollToBottom();
+    }
+
+    function ago(epochSeconds) {
+      const mins = Math.max(0, Math.round((Date.now() / 1000 - epochSeconds) / 60));
+      if (mins < 1) return "just now";
+      if (mins < 60) return `${mins} min ago`;
+      const hours = Math.round(mins / 60);
+      return hours < 24 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
+    }
+
+    function topicCard(t, i, maxCount) {
+      const fmt = root.NovaSRT ? root.NovaSRT.formatTime : (x) => String(Math.floor(x));
+      const heat = h("div", { class: "topic-heat" }, h("i"));
+      heat.firstChild.style.width = `${Math.max(8, Math.round((t.count / maxCount) * 100))}%`;
+      const item = h(
+        "article",
+        { class: "topic" },
+        h(
+          "div",
+          { class: "topic-head" },
+          h("span", { class: "topic-rank", text: String(i + 1) }),
+          h("h4", { class: "topic-name", text: t.title }),
+          h("span", { class: "topic-count", text: `${t.count} question${t.count === 1 ? "" : "s"}` })
+        ),
+        heat,
+        t.summary ? h("p", { class: "topic-summary", text: t.summary }) : null,
+        h("button", { class: "topic-seek", type: "button", title: "Jump to this part of the lecture", onclick: () => o.onSeek(t.time) }, `▶ ${fmt(t.time)}`)
+      );
+      if (t.examples && t.examples.length) {
+        item.append(h("ul", { class: "topic-examples" }, t.examples.map((e) => h("li", { text: e }))));
+      }
+      return item;
+    }
+
+    topicsBtn.addEventListener("click", () => {
+      setMenuOpen(false);
+      setPopOpen(false);
+      if (card.dataset.view === "topics") return setView("chat");
+      setView("topics");
+      topicsBack.focus({ preventScroll: true }); // keyboard focus moves into the view (Escape goes back)
+      o.onOpenTopics();
+    });
+    topicsBack.addEventListener("click", () => setView("chat"));
+    topicsRefresh.addEventListener("click", () => o.onRefreshTopics());
+
     function onKey(event) {
       if (event.key !== "Escape") return;
+      if (card.dataset.view === "topics" && pop.hidden && menu.hidden) {
+        setView("chat");
+        topicsBtn.focus();
+        return;
+      }
       if (!pop.hidden) {
         setPopOpen(false);
         subBtn.focus();
@@ -785,6 +873,53 @@
       setSubtitles(partial) {
         Object.assign(sub, partial);
         renderSubtitleControls();
+      },
+
+      showChat: () => setView("chat"),
+      showTopics() {
+        api.restore();
+        setView("topics");
+        o.onOpenTopics();
+      },
+      isTopicsOpen: () => card.dataset.view === "topics",
+
+      /**
+       * Fill the Hot topics view.
+       * state: "loading" | "ready" | "empty" | "error"
+       * topics: [{ title, summary, count, time, examples }], total: questions asked, updatedAt: epoch seconds
+       */
+      setTopics({ state, topics = [], total = 0, updatedAt = null, error = "" } = {}) {
+        topicsRefresh.disabled = state === "loading";
+        topicsUpdated.textContent = updatedAt && state === "ready" ? `Updated ${ago(updatedAt)}` : "";
+        if (state === "loading") {
+          topicsSub.textContent = "";
+          topicsBody.replaceChildren(h("div", { class: "topics-state" }, h("span", { class: "spinner", "aria-hidden": "true" }), h("span", { text: "Finding what students ask about most…" })));
+        } else if (state === "empty") {
+          topicsSub.textContent = "";
+          topicsBody.replaceChildren(
+            h(
+              "div",
+              { class: "topics-state topics-empty" },
+              h("b", { text: "No questions yet" }),
+              h("span", { text: "When students ask Nova about this lecture, the most common topics show up here." })
+            )
+          );
+        } else if (state === "error") {
+          topicsSub.textContent = "";
+          topicsBody.replaceChildren(
+            h(
+              "div",
+              { class: "topics-state topics-error" },
+              h("b", { text: "Couldn't load hot topics" }),
+              h("span", { text: error || "The Nova server isn't reachable right now." }),
+              h("button", { class: "notice-action", type: "button", text: "Retry", onclick: () => o.onRefreshTopics() })
+            )
+          );
+        } else {
+          topicsSub.textContent = `From ${total} question${total === 1 ? "" : "s"} students asked Nova. Example questions are reworded.`;
+          const maxCount = Math.max(1, ...topics.map((t) => t.count));
+          topicsBody.replaceChildren(...topics.map((t, i) => topicCard(t, i, maxCount)));
+        }
       },
 
       openSubtitles() {

@@ -17,6 +17,7 @@ Endpoints (see the "Backend contract" in extension/content.js):
   POST /translate  translate a batch of caption cues for the subtitle overlay
   POST /summary    summary, key points and timestamped chapters for a lecture
   POST /explain    whiteboard lesson plan
+  POST /topics     hot topics: the lecture's most-asked themes (see topics.py; set NOVA_DB_PATH on Railway)
   GET  /voices     ElevenLabs voices (optional voice engine)
   POST /tts        {text, voice_id} -> audio/mpeg (ElevenLabs)
   POST /transcribe raw audio body -> {text} (ElevenLabs Scribe)
@@ -35,6 +36,8 @@ import urllib.parse
 import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import topics as hot_topics
 
 PORT = int(os.environ.get("PORT", "8000"))
 # /ask and /translate. (GEMINI_MODEL below is the whiteboard's model.)
@@ -123,6 +126,7 @@ def complete(system, user, max_tokens, json_output=False, image_b64=None, histor
 
 
 LECTURES = {}  # lecture_id -> {"title": str, "captions": [...]}
+STORE = hot_topics.QuestionStore()  # anonymous question log for Hot topics (SQLite at NOVA_DB_PATH)
 TRANSLATIONS = {}  # (lecture_id, language_code, cue_index) -> translated text. In memory: lost on restart.
 MAX_TRANSLATE_CUES = 100
 
@@ -216,6 +220,17 @@ def transcript_text(captions):
     return "\n".join(lines)
 
 
+def record_question(body, title):
+    """Save a typed question for Hot topics. Chip taps ("Explain what was just said") aren't topics."""
+    question = str(body.get("question") or "").strip()
+    if not question or body.get("source") == "chip" or not body.get("lecture_id"):
+        return
+    try:
+        STORE.add(str(body["lecture_id"]), title, question, body.get("current_time") or 0)
+    except Exception as e:  # never let logging break an answer
+        print("could not save question:", e)
+
+
 def ask(body):
     lec = LECTURES.get(body.get("lecture_id"))
     if lec:
@@ -247,6 +262,7 @@ def ask(body):
         f"Lecture: {title}\n\nTranscript:\n{transcript}\n\n"
         f"The student is paused at {now}.\nQuestion: {body.get('question', '')}"
     )
+    record_question(body, title if lec else body.get("title", ""))
     return complete(system, user, max_tokens=2048, image_b64=image, history=history_turns(body.get("history")))
 
 
@@ -746,8 +762,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, summarize(body))
             if self.path == "/explain":
                 return self._send(200, explain(body))
+            if self.path == "/topics":
+                return self._send(200, hot_topics.topics(body, STORE, complete))
             self._send(404, {"error": "not found"})
-        except BadRequest as e:
+        except (BadRequest, ValueError) as e:
             self._send(400, {"error": str(e)})
         except VoiceError as e:
             print("voice error:", e)

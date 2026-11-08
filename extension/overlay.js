@@ -817,7 +817,22 @@
         ),
         heat,
         t.summary ? h("p", { class: "topic-summary", text: t.summary }) : null,
-        h("button", { class: "topic-seek", type: "button", title: "Jump to this part of the lecture", onclick: () => o.onSeek(t.time) }, `▶ ${fmt(t.time)}`)
+        h(
+          "div",
+          { class: "topic-actions" },
+          h("button", { class: "topic-seek", type: "button", title: "Jump to this part of the lecture", onclick: () => o.onSeek(t.time) }, `▶ ${fmt(t.time)}`),
+          // Opens the whiteboard lesson on this theme (same path as Deep Dive on a reply).
+          h(
+            "button",
+            {
+              class: "topic-teach",
+              type: "button",
+              title: "Open a whiteboard lesson on this topic",
+              onclick: () => o.onExplain({ question: `Teach me: ${t.title}`, text: t.summary || t.title, time: t.time }),
+            },
+            "🎓 Teach me this"
+          )
+        )
       );
       if (t.examples && t.examples.length) {
         item.append(h("ul", { class: "topic-examples" }, t.examples.map((e) => h("li", { text: e }))));
@@ -833,6 +848,44 @@
       topicsBack.focus({ preventScroll: true }); // keyboard focus moves into the view (Escape goes back)
       o.onOpenTopics();
     });
+    /** Count question times into equal slices of the lecture. Pure, so it's easy to reason about. */
+    function bucketTimes(times, duration, maxBars = 24) {
+      const end = Math.max(Number(duration) || 0, ...times.map((x) => x + 1), 60);
+      const bars = Math.min(maxBars, Math.max(6, Math.ceil(end / 60)));
+      const size = end / bars;
+      const counts = new Array(bars).fill(0);
+      for (const x of times) counts[Math.min(bars - 1, Math.floor(x / size))]++;
+      return { counts, size, end };
+    }
+
+    /** "Where students get stuck": questions per slice of the lecture. Click a bar to jump there. */
+    function timelineCard(times, duration) {
+      const fmt = root.NovaSRT ? root.NovaSRT.formatTime : (x) => String(Math.floor(x));
+      const { counts, size, end } = bucketTimes(times, duration);
+      const peak = Math.max(...counts);
+      const bars = counts.map((n, i) => {
+        const from = i * size;
+        const bar = h("button", {
+          class: "tl-bar" + (n === peak && n > 0 ? " peak" : ""),
+          type: "button",
+          title: `${fmt(from)}–${fmt(Math.min(end, from + size))}: ${n} question${n === 1 ? "" : "s"}`,
+          "aria-label": `${fmt(from)}, ${n} question${n === 1 ? "" : "s"}. Jump here`,
+          onclick: () => o.onSeek(from),
+        }, h("i"));
+        bar.firstChild.style.height = n ? `${Math.max(8, Math.round((n / peak) * 100))}%` : "3px";
+        return bar;
+      });
+      const at = counts.indexOf(peak);
+      return h(
+        "section",
+        { class: "timeline", "aria-label": "Questions across the lecture" },
+        h("h4", { class: "tl-title", text: "Where students get stuck" }),
+        h("p", { class: "tl-peak", text: `Most questions: ${fmt(at * size)}–${fmt(Math.min(end, (at + 1) * size))} (${peak})` }),
+        h("div", { class: "tl-bars" }, bars),
+        h("div", { class: "tl-axis" }, h("span", { text: fmt(0) }), h("span", { text: fmt(end / 2) }), h("span", { text: fmt(end) }))
+      );
+    }
+
     topicsBack.addEventListener("click", () => setView("chat"));
     topicsRefresh.addEventListener("click", () => o.onRefreshTopics());
 
@@ -934,8 +987,9 @@
        * Fill the Hot topics view.
        * state: "loading" | "ready" | "empty" | "error"
        * topics: [{ title, summary, count, time, examples }], total: questions asked, updatedAt: epoch seconds
+       * times: video seconds of every question (draws the timeline), duration: lecture length in seconds
        */
-      setTopics({ state, topics = [], total = 0, updatedAt = null, error = "" } = {}) {
+      setTopics({ state, topics = [], total = 0, updatedAt = null, error = "", times = [], duration = 0 } = {}) {
         topicsRefresh.disabled = state === "loading";
         topicsUpdated.textContent = updatedAt && state === "ready" ? `Updated ${ago(updatedAt)}` : "";
         if (state === "loading") {
@@ -965,7 +1019,7 @@
         } else {
           topicsSub.textContent = `From ${total} question${total === 1 ? "" : "s"} students asked Nova. Example questions are reworded.`;
           const maxCount = Math.max(1, ...topics.map((t) => t.count));
-          topicsBody.replaceChildren(...topics.map((t, i) => topicCard(t, i, maxCount)));
+          topicsBody.replaceChildren(...(times.length ? [timelineCard(times, duration)] : []), ...topics.map((t, i) => topicCard(t, i, maxCount)));
         }
       },
 

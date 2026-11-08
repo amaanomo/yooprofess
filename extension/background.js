@@ -19,6 +19,9 @@ const cfg = self.NovaConfig;
  * reply, so the UI can be demoed without a server. Voice still needs the server.
  */
 const STUB_MODE = false;
+// Hot topics demo data (themes + a question timeline) when the server has no questions yet.
+// Set to false to always show real data only.
+const MOCK_TOPICS = true;
 
 const TIMEOUT_MS = { lectures: 20000, ask: 45000, explain: 60000, translate: 60000, summary: 90000, topics: 45000 };
 
@@ -524,7 +527,35 @@ async function topicsBackend(payload) {
     };
   }
   log(`POST /topics ${payload.lecture_id}${payload.refresh ? " (refresh)" : ""}`);
-  return postJSON("/topics", payload, TIMEOUT_MS.topics);
+  const res = await postJSON("/topics", payload, TIMEOUT_MS.topics);
+  if (MOCK_TOPICS && (!res.ok || !res.data || res.data.status === "empty")) return mockTopics();
+  return res;
+}
+
+/** Demo Hot topics: a lecture with three rough patches, so the timeline has a story. */
+function mockTopics() {
+  const bursts = [[420, 6, 90], [1260, 9, 150], [1500, 5, 100], [2700, 14, 200], [3480, 7, 120], [4560, 4, 90]]; // [center s, count, spread s]
+  const times = [];
+  let seed = 7;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  for (const [center, count, spread] of bursts) for (let i = 0; i < count; i++) times.push(Math.max(5, Math.round(center + (rand() - 0.5) * 2 * spread)));
+  times.sort((a, b) => a - b);
+  return {
+    ok: true,
+    mock: true,
+    data: {
+      status: "ok",
+      total_questions: times.length,
+      updated_at: Date.now() / 1000 - 90,
+      question_times: times,
+      topics: [
+        { title: "Backpropagation and the chain rule", summary: "Students can't see how the loss gradient flows back through the layers.", count: 14, time: 2700, examples: ["Why do we multiply the derivatives layer by layer?", "How does a weight in layer 1 affect the final loss?"] },
+        { title: "What a weight and bias do", summary: "Unclear how w and b combine into z = w·x + b.", count: 9, time: 1260, examples: ["What's the difference between a weight and a bias?"] },
+        { title: "Choosing an activation function", summary: "Why f(z) is needed and how ReLU differs from sigmoid.", count: 7, time: 3480, examples: ["Why can't the network just use z directly?"] },
+        { title: "Learning rate", summary: "Confusion about step size and divergence.", count: 5, time: 1500, examples: ["What happens if the learning rate is too big?"] },
+      ],
+    },
+  };
 }
 
 async function translateBackend(payload) {

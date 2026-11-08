@@ -1103,5 +1103,5 @@
     return api;
   }
 
-  root.NovaOverlay = { create, installKeyGuard };
+  root.NovaOverlay = { create, installKeyGuard, alienSvg }; // alienSvg is reused by the subtitle pill
 })(globalThis);

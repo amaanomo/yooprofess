@@ -424,14 +424,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // Hand the context to the whiteboard tab through storage, then open it.
       const key = "nova:explain:" + Date.now();
       return reply(
-        chrome.storage.local
-          .set({ [key]: msg.payload })
+        pruneExplainContexts()
+          .then(() => chrome.storage.local.set({ [key]: msg.payload }))
           .then(() => chrome.tabs.create({ url: chrome.runtime.getURL("explain.html") + "?k=" + encodeURIComponent(key) }))
           .then(() => ({ ok: true }))
       );
     }
     case "NOVA_EXPLAIN_PLAN":
       return reply(postJSON("/explain", msg.payload, TIMEOUT_MS.explain));
+    case "NOVA_EXPLAIN_CODE":
+      // Is there code to walk through (in the question, the answer or the video frame)?
+      return reply(STUB_MODE ? Promise.resolve(stubFindCode(msg.payload)) : postJSON("/explain/code", msg.payload, TIMEOUT_MS.explain));
 
     // ---- content scripts -> voice
     case "NOVA_REGISTER_LECTURE_FRAME":
@@ -596,6 +599,25 @@ async function openInstructorDashboard(lectureId) {
   const url = cfg.BACKEND_URL.replace(/\/+$/, "") + "/instructor" + (hash.toString() ? "#" + hash.toString() : "");
   await chrome.tabs.create({ url });
   return { ok: true };
+}
+
+/** Deep Dive contexts now carry a video frame; keep only the newest few so storage doesn't fill up. */
+async function pruneExplainContexts(keep = 8) {
+  try {
+    const all = await chrome.storage.local.get(null);
+    const keys = Object.keys(all).filter((k) => /^nova:explain:\d+$/.test(k)).sort();
+    const old = keys.slice(0, Math.max(0, keys.length - keep));
+    if (old.length) await chrome.storage.local.remove(old);
+  } catch (_) {
+    /* best effort */
+  }
+}
+
+/** STUB_MODE: treat a question or answer with 2+ code-looking lines as code. */
+function stubFindCode(p) {
+  const text = [p.question, p.reply].filter(Boolean).join("\n");
+  const lines = text.split("\n").filter((l) => /[=(){};:]|^\s*(import|def|class|for|if|return|print)\b/.test(l));
+  return { ok: true, stub: true, data: lines.length >= 2 ? { found: true, code_language: "python", source: "question", code: lines.slice(0, 25).join("\n") } : { found: false } };
 }
 
 async function topicsBackend(payload, keyOverride) {

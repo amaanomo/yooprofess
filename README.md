@@ -42,6 +42,7 @@ The dashboard is a one-on-one lesson with Professor Nova:
 
 - **Professor Nova** walks through the concept step by step, like a professor at office hours, starting from what the lecture covered and building up from there using full subject knowledge and live web research.
 - **Whiteboard.** As Nova explains, it draws: diagrams, flowcharts, labeled examples, and visuals that build up step by step alongside the explanation, so students can *see* the idea, not just read about it.
+- **Code walkthrough** ✅ When the question, Nova's answer, or the professor's screen has code in it, Deep Dive asks whether to walk through the code or explain with a diagram. The walkthrough shows the code on the left with the current lines highlighted and builds up one explanation card per step on the right (at most 25 lines, the part the question is about). Code read from the video is marked "may contain small mistakes". You can switch between the two views at any time, and Simpler, Deeper, follow-ups and the lesson language all work in both. Backend: `POST /explain/code` finds the code; `POST /explain` with `mode: "code"` plans the walkthrough.
 - **Lecture link.** The concept stays tied to the recording, with a reference back to the moment it came up so the student can return to the video.
 - **Keep asking.** Students can interrupt, ask follow-ups, or say "show me another example," and Nova keeps teaching on the same board.
 

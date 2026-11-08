@@ -38,6 +38,8 @@
   // Each question also saves a small slide thumbnail so "Export notes" can show it. Kept apart from the
   // chat history and capped, so it can't fill the browser's storage. Set false for text-only notes.
   const SAVE_SHOTS = true;
+  /** Deep Dive uses a fresh frame if the video is still within this many seconds of the question. */
+  const DEEP_DIVE_FRAME_WINDOW_S = 15;
   const SHOT_MAX_WIDTH = 480;
   const SHOT_QUALITY = 0.6;
   const MAX_SHOTS_PER_LECTURE = 30;
@@ -1057,7 +1059,8 @@
       commandMsg = true;
     }
     const { clean, watch } = parseWatch(body);
-    const msg = { role: "nova", text: clean, watch, question, time: payload.current_time, at: Date.now() };
+    // questionAt: the student message's time, which keys the slide thumbnail saved for it (Deep Dive uses it).
+    const msg = { role: "nova", text: clean, watch, question, time: payload.current_time, questionAt: at, at: Date.now() };
     if (commandMsg) msg.local = true; // no "Deep Dive" on "Jumping to 7:48"
     if (res.stub) msg.stub = true;
     saveMessage(msg);
@@ -1176,7 +1179,22 @@
   }
 
   // Opens the whiteboard tab (explain.html) for an Nova reply.
-  function explainInDepth(msg) {
+  /**
+   * The slide for a Deep Dive: a fresh, full-size frame if the video is still near the moment of the
+   * question (so code on screen is readable), otherwise the thumbnail saved when the question was asked.
+   */
+  async function explainFrame(msg) {
+    const v = state.video;
+    if (v && Number.isFinite(msg.time) && Math.abs(v.currentTime - msg.time) <= DEEP_DIVE_FRAME_WINDOW_S) {
+      const fresh = grabFrame(FRAME_MAX_WIDTH, FRAME_QUALITY);
+      if (fresh) return fresh;
+    }
+    const shots = (await storageGet(shotsKey(state.lectureId))) || {};
+    return (msg.questionAt && shots[msg.questionAt]) || null;
+  }
+
+  async function explainInDepth(msg) {
+    const image = SEND_FRAME ? await explainFrame(msg) : null;
     sendToBackground({
       type: "NOVA_EXPLAIN_OPEN",
       payload: {
@@ -1184,6 +1202,7 @@
         question: msg.question || "",
         reply: msg.text,
         current_time: msg.time || 0,
+        image, // lets Deep Dive find code on the professor's screen
         ...lessonLanguage(),
       },
     });

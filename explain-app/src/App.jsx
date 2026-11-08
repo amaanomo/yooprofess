@@ -5,6 +5,7 @@ import PlanetGlow from './background/PlanetGlow.jsx'
 import Header from './components/Header.jsx'
 import TeacherPanel from './components/TeacherPanel.jsx'
 import Whiteboard from './components/Whiteboard.jsx'
+import CodeBoard, { ModeChooser } from './components/CodeBoard.jsx'
 import Footer from './components/Footer.jsx'
 import { sendToBackground } from './lib/chromeBridge.js'
 import { renderUpTo } from './lib/drawShapes.js'
@@ -32,6 +33,10 @@ export default function App() {
   const [muted, setMutedUI] = useState(() => readPref('nova:muted') === '1')
   const [voiceBlocked, setVoiceBlockedUI] = useState(false)
   const [statusText, setStatusText] = useState('')
+  // Code walkthrough: mode is 'diagram' or 'code'; codeInfo is { code, code_language, source } when code was found.
+  const [mode, setModeUI] = useState('diagram')
+  const [codeInfo, setCodeInfo] = useState(null)
+  const [choosing, setChoosing] = useState(false)
 
   // === Mutable runtime state (refs, read in async callbacks) ===
   const stepsRef = useRef([])
@@ -46,6 +51,8 @@ export default function App() {
   const ctxRef = useRef(null)
   const planKeyRef = useRef('')
   const svgLayerRef = useRef(null)
+  const modeRef = useRef('diagram')
+  const codeRef = useRef(null)
 
   // Keep refs in sync with state setters
   const updateSteps = useCallback((v) => { stepsRef.current = v; setSteps(v) }, [])
@@ -56,7 +63,16 @@ export default function App() {
   const updateMuted = useCallback((v) => { mutedRef.current = v; setMutedUI(v) }, [])
   const updateVoiceBlocked = useCallback((v) => { voiceBlockedRef.current = v; setVoiceBlockedUI(v) }, [])
 
-  const cacheKey = useCallback(() => `${planKeyRef.current}:${levelRef.current}`, [])
+  const updateMode = useCallback((v) => { modeRef.current = v; setModeUI(v) }, [])
+  const cacheKey = useCallback(() => `${planKeyRef.current}:${modeRef.current}:${levelRef.current}`, [])
+
+  /** What the backend needs for a lesson: the context (minus the frame), plus the code in code mode. */
+  const lessonPayload = useCallback((extra) => {
+    // eslint-disable-next-line no-unused-vars
+    const { image, ...ctx } = ctxRef.current || {}
+    const code = modeRef.current === 'code' && codeRef.current ? { mode: 'code', ...codeRef.current } : {}
+    return { ...ctx, ...code, level: levelRef.current, ...extra }
+  }, [])
 
   async function persist(plan) {
     try { await chrome.storage.local.set({ [cacheKey()]: plan }) } catch (_) { /* cache is optional */ }
@@ -130,7 +146,7 @@ export default function App() {
   const showStep = useCallback((i, animate) => {
     const clamped = Math.max(0, Math.min(stepsRef.current.length - 1, i))
     updateIndex(clamped)
-    renderUpTo(svgLayerRef.current, stepsRef.current, clamped, animate)
+    if (modeRef.current !== 'code' && svgLayerRef.current) renderUpTo(svgLayerRef.current, stepsRef.current, clamped, animate)
     setCaptionText(stepsRef.current[clamped]?.say || '')
     // Scroll outline step into view
     const li = document.querySelector(`#outline li:nth-child(${clamped + 1})`)
@@ -173,6 +189,8 @@ export default function App() {
         ? 'Making it simpler…'
         : levelRef.current === 'deeper'
         ? 'Going deeper…'
+        : modeRef.current === 'code'
+        ? 'Nova is reading through the code…'
         : 'Nova is thinking about how to draw this…'
     )
 
@@ -183,10 +201,7 @@ export default function App() {
     } catch (_) { /* ignore */ }
 
     if (!validPlan(plan)) {
-      const res = await sendToBackground({
-        type: 'NOVA_EXPLAIN_PLAN',
-        payload: { ...ctxRef.current, level: levelRef.current },
-      })
+      const res = await sendToBackground({ type: 'NOVA_EXPLAIN_PLAN', payload: lessonPayload() })
       plan = res.ok ? res.data : null
       if (validPlan(plan) && (plan.steps.length > 1 || (plan.steps[0].draw || []).length)) {
         persist(plan)
@@ -214,7 +229,37 @@ export default function App() {
     setStatusText('')
     buildAndPlay(plan.steps, 0)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stopNarration, updateBusy, cacheKey, updateLevel, updateSteps, buildAndPlay])
+  }, [stopNarration, updateBusy, cacheKey, updateLevel, updateSteps, buildAndPlay, lessonPayload])
+
+  // === Code walkthrough vs diagram ===
+  const pickMode = useCallback((next) => {
+    if (busyRef.current) return
+    setChoosing(false)
+    updateMode(next)
+    stopNarration()
+    updateSteps([])
+    updateIndex(-1)
+    if (svgLayerRef.current) svgLayerRef.current.replaceChildren()
+    try { chrome.storage.local.set({ [planKeyRef.current + ':mode']: next }) } catch (_) { /* optional */ }
+    loadPlan()
+  }, [updateMode, stopNarration, updateSteps, updateIndex, loadPlan])
+
+  /** Looks for code in the question, the answer or the video frame. Remembered per tab. */
+  const detectCode = useCallback(async () => {
+    const key = planKeyRef.current + ':code'
+    try {
+      const saved = await chrome.storage.local.get([key, planKeyRef.current + ':mode'])
+      if (saved[key] !== undefined) return { info: saved[key], mode: saved[planKeyRef.current + ':mode'] }
+    } catch (_) { /* ignore */ }
+    setStatusText('Nova is looking at the question…')
+    const { lecture_id, question, reply, image } = ctxRef.current
+    const res = await sendToBackground({ type: 'NOVA_EXPLAIN_CODE', payload: { lecture_id, question, reply, image } })
+    const info = res.ok && res.data && res.data.found
+      ? { code: res.data.code, code_language: res.data.code_language, source: res.data.source }
+      : null
+    try { chrome.storage.local.set({ [key]: info }) } catch (_) { /* optional */ }
+    return { info, mode: null }
+  }, [])
 
   // === Level change ===
   const setLevel = useCallback((next) => {
@@ -234,12 +279,10 @@ export default function App() {
 
     const res = await sendToBackground({
       type: 'NOVA_EXPLAIN_PLAN',
-      payload: {
-        ...ctxRef.current,
-        level: levelRef.current,
+      payload: lessonPayload({
         followup: q,
         lesson: stepsRef.current.map(({ head, say }) => ({ head, say })),
-      },
+      }),
     })
     updateBusy(false)
 
@@ -257,7 +300,7 @@ export default function App() {
     updatePlaying(true)
     updateVoiceBlocked(false)
     showStep(first, true)
-  }, [stopNarration, updateBusy, updateSteps, updatePlaying, updateVoiceBlocked, showStep, title])
+  }, [stopNarration, updateBusy, updateSteps, updatePlaying, updateVoiceBlocked, showStep, title, lessonPayload])
 
   // === Keyboard shortcuts ===
   useEffect(() => {
@@ -293,7 +336,14 @@ export default function App() {
       setLanguage(ctx.speech_lang) // lessons follow the lecture's subtitle language
       planKeyRef.current = 'nova:plan:' + key
       setQuestion(ctx.question ? `You asked: ${ctx.question}` : '')
-      loadPlan()
+      const { info, mode: savedMode } = await detectCode()
+      codeRef.current = info
+      setCodeInfo(info)
+      if (!info) return loadPlan() // no code: the usual diagram lesson
+      if (savedMode) { updateMode(savedMode); return loadPlan() } // this tab already chose
+      setStatusText('')
+      setCaptionText('Pick how you want this explained.')
+      setChoosing(true)
     }
     load()
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -340,6 +390,30 @@ export default function App() {
           svgLayerRef={svgLayerRef}
           captionText={captionText}
           statusText={statusText}
+          codeView={mode === 'code' && codeInfo ? (
+            <CodeBoard
+              code={codeInfo.code}
+              language={codeInfo.code_language}
+              source={codeInfo.source}
+              steps={steps}
+              index={index}
+              otherModeLabel="Show as a diagram instead"
+              onOtherMode={() => pickMode('diagram')}
+            />
+          ) : null}
+          overlay={
+            choosing ? (
+              <ModeChooser source={codeInfo?.source} onPick={pickMode} />
+            ) : mode === 'diagram' && codeInfo && steps.length ? (
+              <button
+                type="button"
+                onClick={() => pickMode('code')}
+                style={{ position: 'absolute', top: 12, right: 14, zIndex: 4, background: 'rgba(19,22,41,0.85)', border: '1px solid #252a4d', borderRadius: 999, padding: '6px 12px', color: 'var(--comet)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer' }}
+              >
+                Walk through the code instead
+              </button>
+            ) : null
+          }
         />
       </main>
 

@@ -239,6 +239,8 @@ button:disabled {
   right: 18px;
   z-index: 5;
   width: 260px;
+  max-height: min(520px, calc(100vh - 200px)); /* stays inside the card when many chats are saved */
+  overflow-y: auto;
   padding: 6px;
   background: #131629;
   color: var(--star);
@@ -1088,6 +1090,54 @@ button:disabled {
   white-space: nowrap;
 }
 
+.chapters {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chapters-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--star-muted);
+}
+
+.chapter-btn {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid rgba(103, 232, 249, 0.2);
+  border-radius: 8px;
+  background: rgba(103, 232, 249, 0.05);
+  color: var(--aurora);
+  font-size: 13px;
+  text-align: left;
+  transition: background-color 120ms ease;
+}
+
+.chapter-btn:hover {
+  background: rgba(103, 232, 249, 0.14);
+}
+
+.chapter-time {
+  flex: none;
+  min-width: 42px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.chapter-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--star, inherit);
+  overflow-wrap: anywhere;
+}
+
 .deep-dive-btn {
   display: block;
   margin-top: 10px;
@@ -1214,10 +1264,9 @@ button:disabled {
 .chips {
   flex: none;
   display: flex;
+  flex-wrap: wrap; /* every chip stays visible; a hidden sideways scroll made the last one easy to miss */
   gap: 8px;
-  overflow-x: auto;
   padding: 6px 20px 12px;
-  scrollbar-width: none;
 }
 
 .chips::-webkit-scrollbar {

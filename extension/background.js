@@ -24,7 +24,7 @@ const BACKEND_URL = "https://yooprofess-production.up.railway.app";
  */
 const STUB_MODE = false;
 
-const TIMEOUT_MS = { lectures: 20000, ask: 45000, explain: 60000, translate: 60000, topics: 45000 };
+const TIMEOUT_MS = { lectures: 20000, ask: 45000, explain: 60000, translate: 60000, summary: 90000, topics: 45000 };
 
 importScripts("srt.js"); // for NovaSRT.formatTime in stub replies
 
@@ -69,6 +69,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     translateBackend(msg.payload).then(sendResponse);
     return true;
   }
+  if (msg.type === "NOVA_SUMMARY") {
+    summaryBackend(msg.payload).then(sendResponse);
+    return true;
+  }
   if (msg.type === "NOVA_EXPLAIN_OPEN") {
     // Hand the context to the whiteboard tab through storage, then open it.
     const key = "nova:explain:" + Date.now();
@@ -105,6 +109,25 @@ async function askBackend(payload) {
     return { ok: true, stub: true, data: stubAskReply(payload) };
   }
   return postJSON("/ask", payload, TIMEOUT_MS.ask);
+}
+
+async function summaryBackend(payload) {
+  const count = Array.isArray(payload.captions) ? payload.captions.length : 0;
+  log(`POST /summary ${payload.lecture_id} (${count} captions${payload.language ? ", " + payload.language : ""})`);
+  if (STUB_MODE) {
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    const first = (payload.captions && payload.captions[0] && payload.captions[0].start) || 0;
+    return {
+      ok: true,
+      stub: true,
+      data: {
+        summary: "This is a demo summary (stub mode). Turn STUB_MODE off to get a real one.",
+        key_points: ["Real summaries cover the main ideas of the lecture."],
+        chapters: [{ start: first, title: "Start of lecture" }],
+      },
+    };
+  }
+  return postJSON("/summary", payload, TIMEOUT_MS.summary);
 }
 
 async function topicsBackend(payload) {

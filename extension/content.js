@@ -32,10 +32,17 @@
   const SEND_FRAME = true;
   const FRAME_MAX_WIDTH = 1024;
   const FRAME_QUALITY = 0.7;
+  // Each question also saves a small slide thumbnail so "Export notes" can show it. Kept apart from the
+  // chat history and capped, so it can't fill the browser's storage. Set false for text-only notes.
+  const SAVE_SHOTS = true;
+  const SHOT_MAX_WIDTH = 480;
+  const SHOT_QUALITY = 0.6;
+  const MAX_SHOTS_PER_LECTURE = 30;
   const CAPTION_WINDOW_SECONDS = 90;
 
   /** Static suggestion chips. Replaced by `chips` from /ask when the backend sends them. */
-  const DEFAULT_CHIPS = ["Explain what was just said", "Give me an example", "Quiz me on this"];
+  const SUMMARY_PROMPT = "Summarize this lecture"; // the chip and the student message; sent to /summary, not /ask
+  const DEFAULT_CHIPS = ["Explain what was just said", "Give me an example", "Quiz me on this", SUMMARY_PROMPT];
 
   /** Tried in order for the lecture title; falls back to document.title. */
   const TITLE_SELECTORS = [
@@ -220,7 +227,9 @@
       cssUrl: chrome.runtime.getURL("overlay.css"),
       mascotUrl: chrome.runtime.getURL("icons/nova.png"),
       windowSeconds: CAPTION_WINDOW_SECONDS,
-      onSend: (text, source) => ask(text, source),
+      onSend: (text, source) => (text === SUMMARY_PROMPT ? summarize() : ask(text, source)),
+      onSummarize: () => summarize(),
+      onExportNotes: exportNotes,
       onDownload: downloadJson,
       onReloadCaptions: () => loadCaptions({ force: true }),
       onClearChat: clearChat,
@@ -610,17 +619,21 @@
    * won't let us read it (cross-origin or DRM video taints the canvas) or nothing is playing yet.
    */
   function captureFrame() {
+    return SEND_FRAME ? grabFrame(FRAME_MAX_WIDTH, FRAME_QUALITY) : null;
+  }
+
+  function grabFrame(maxWidth, quality) {
     const v = state.video;
-    if (!SEND_FRAME || !v || !v.videoWidth || !v.videoHeight || v.readyState < 2) return null;
+    if (!v || !v.videoWidth || !v.videoHeight || v.readyState < 2) return null;
     try {
-      const scale = Math.min(1, FRAME_MAX_WIDTH / v.videoWidth);
+      const scale = Math.min(1, maxWidth / v.videoWidth);
       const canvas = document.createElement("canvas");
       canvas.width = Math.round(v.videoWidth * scale);
       canvas.height = Math.round(v.videoHeight * scale);
       canvas.getContext("2d").drawImage(v, 0, 0, canvas.width, canvas.height);
-      return canvas.toDataURL("image/jpeg", FRAME_QUALITY).split(",")[1] || null;
+      return canvas.toDataURL("image/jpeg", quality).split(",")[1] || null;
     } catch (err) {
-      warn("Couldn't capture the video frame, asking with text only", err && err.name);
+      warn("Couldn't capture the video frame", err && err.name);
       return null;
     }
   }
@@ -641,7 +654,9 @@
     );
     log("/ask payload", frame ? { ...payload, image: `<${Math.round(frame.length / 1024)} KB jpeg>` } : payload);
 
-    saveMessage({ role: "student", text: question, time: payload.current_time, at: Date.now() });
+    const at = Date.now();
+    saveMessage({ role: "student", text: question, time: payload.current_time, at });
+    saveShot(lectureId, at);
     overlay.addMessage({ role: "student", text: question });
     setBusy(true);
     overlay.showTyping(true);
@@ -669,6 +684,106 @@
     saveMessage(msg);
     overlay.addMessage(msg);
     if (chips) overlay.setChips(chips);
+  }
+
+  // ---- Export notes ------------------------------------------------------------
+
+  /** Keeps a thumbnail of the slide for the question asked at `at`, for the notes export. */
+  async function saveShot(lectureId, at) {
+    if (!SAVE_SHOTS) return;
+    const shot = grabFrame(SHOT_MAX_WIDTH, SHOT_QUALITY);
+    if (!shot) return;
+    const shots = (await storageGet(shotsKey(lectureId))) || {};
+    shots[at] = shot;
+    const keys = Object.keys(shots).sort((a, b) => Number(a) - Number(b));
+    for (const k of keys.slice(0, Math.max(0, keys.length - MAX_SHOTS_PER_LECTURE))) delete shots[k]; // oldest go first
+    await storageSet(shotsKey(lectureId), shots);
+  }
+
+  /** "Export notes": the chat you're in, as a Markdown file or a web page that prints to PDF. */
+  async function exportNotes(format) {
+    const lectureId = state.lectureId;
+    const shots = (await storageGet(shotsKey(lectureId))) || {};
+    const model = {
+      title: state.title,
+      url: location.href.split("#")[0],
+      exportedAt: new Date(),
+      messages: state.history,
+      shots,
+    };
+    const notes = NovaNotes.build(model);
+    if (!notes.counts.qa && !notes.counts.summary) {
+      overlay.setNotice({ key: "notes", kind: "info", text: "Nothing to export yet. Ask Nova a question or summarize the lecture first." });
+      return;
+    }
+    const html = format === "html";
+    const blob = new Blob([html ? notes.html : notes.markdown], { type: html ? "text/html" : "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = NovaNotes.fileName(state.title || lectureId, html ? "html" : "md");
+    a.style.display = "none";
+    overlay.host.shadowRoot.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    log(`Exported ${a.download} (${notes.counts.qa} answers, ${notes.counts.shots} screenshots${notes.counts.summary ? ", summary" : ""})`);
+    overlay.setNotice({
+      key: "notes",
+      kind: "success",
+      text: html ? "Notes downloaded. Open the file and choose Print, then Save as PDF." : "Notes downloaded as Markdown.",
+    });
+  }
+
+  /** "Summarize this lecture": one /summary call, shown as a message with clickable chapters. */
+  async function summarize() {
+    if (state.busy) return;
+    if (!state.captions.length) {
+      overlay.setNotice({ key: "summary", kind: "warn", text: "Captions aren't loaded yet, so there's nothing to summarize. Try again in a moment." });
+      return;
+    }
+    const lectureId = state.lectureId;
+    const lang = currentLanguage();
+    const payload = {
+      lecture_id: lectureId,
+      title: state.title,
+      captions: state.captions.map((c) => ({ start: c.start, end: c.end, text: c.text })), // in case the server restarted
+    };
+    if (lang) payload.language = `${lang.english} (${lang.label})`; // summary and chapter titles come back in it
+    log(`/summary with ${payload.captions.length} caption lines${payload.language ? ` in ${payload.language}` : ""}`);
+
+    overlay.clearNotice("summary");
+    saveMessage({ role: "student", text: SUMMARY_PROMPT, time: getCurrentTime(), at: Date.now() });
+    overlay.addMessage({ role: "student", text: SUMMARY_PROMPT });
+    setBusy(true);
+    overlay.showTyping(true);
+
+    const res = await sendToBackground({ type: "NOVA_SUMMARY", payload });
+    if (lectureId !== state.lectureId) return setBusy(false);
+    overlay.showTyping(false);
+    setBusy(false);
+
+    const data = res.ok ? res.data : null;
+    if (!data || typeof data.summary !== "string" || !data.summary.trim()) {
+      warn("/summary failed", res);
+      overlay.addMessage({
+        role: "nova",
+        error: true,
+        text: res.ok
+          ? "I couldn't put a summary together. Try again in a moment."
+          : `I can't reach the Nova server right now (${backendErrorText(res)}). Try again in a moment.`,
+      });
+      return;
+    }
+    const points = Array.isArray(data.key_points) ? data.key_points.filter((p) => typeof p === "string" && p.trim()) : [];
+    const chapters = Array.isArray(data.chapters)
+      ? data.chapters.filter((c) => c && Number.isFinite(c.start) && typeof c.title === "string" && c.title.trim())
+      : [];
+    const text = `**Summary:** ${data.summary.trim()}` + (points.length ? `\n**Key points:**\n${points.map((p) => `• ${p}`).join("\n")}` : "");
+    const msg = { role: "nova", text, summary: data.summary.trim(), key_points: points, chapters, at: Date.now() };
+    if (res.stub) msg.stub = true;
+    saveMessage(msg);
+    overlay.addMessage(msg);
   }
 
   // Opens the whiteboard tab (explain.html) for an Nova reply.
@@ -1113,6 +1228,7 @@
   const captionsKey = (id) => `nova:captions:${id}`;
   const chatKey = (id) => `nova:chat:${id}`; // legacy single chat, migrated into a session
   const sessionsKey = (id) => `nova:sessions:${id}`;
+  const shotsKey = (id) => `nova:shots:${id}`; // { [question time "at"]: base64 slide thumbnail }
 
   async function storageGet(key) {
     try {

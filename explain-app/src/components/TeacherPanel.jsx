@@ -59,8 +59,6 @@ export default function TeacherPanel({ steps, index, busy, talking, onGoTo, onAs
         border: '1px solid #252a4d',
         borderRadius: 16,
         padding: 14,
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
         position: 'relative',
         zIndex: 10,
       }}

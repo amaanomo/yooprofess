@@ -178,6 +178,126 @@
    * @param {() => void} opts.onOpenDashboard  "Open instructor dashboard"
    * @param {() => void} opts.onExitInstructor  "Exit instructor view"
    */
+
+  // ── Canvas starfield (card-scale) ──────────────────────────────────────────
+  function initStarfield(canvas) {
+    const ctx = canvas.getContext("2d");
+    let W, H, stars, meteors, animId, lastMeteorTime;
+
+    function rand(min, max) { return min + Math.random() * (max - min); }
+
+    function initStars() {
+      W = canvas.offsetWidth;
+      H = canvas.offsetHeight;
+      canvas.width = W;
+      canvas.height = H;
+      stars = Array.from({ length: 90 }, () => ({
+        x: rand(0, W),
+        y: rand(0, H),
+        r: rand(0.4, 2.0),
+        opacity: rand(0.4, 0.9),
+        speed: rand(0.0003, 0.001),
+        phase: rand(0, Math.PI * 2),
+      }));
+      meteors = [];
+      lastMeteorTime = performance.now();
+    }
+
+    function spawnMeteor(now) {
+      meteors.push({
+        x: rand(W * 0.1, W * 0.9),
+        y: rand(0, H * 0.33),
+        length: rand(60, 120),
+        angle: rand(0.3, 0.6),  // radians, shallow diagonal
+        speed: rand(3, 6),
+        opacity: 1,
+        born: now,
+      });
+    }
+
+    function draw(now) {
+      animId = requestAnimationFrame(draw);
+      ctx.clearRect(0, 0, W, H);
+
+      // Galaxy smear — drifting radial gradient
+      const gx = W * 0.5 + Math.sin(now * 0.00008) * W * 0.15;
+      const gy = H * 0.4 + Math.cos(now * 0.00006) * H * 0.1;
+      const gr = W * 0.3;
+      const grd = ctx.createRadialGradient(gx, gy, 0, gx, gy, gr);
+      grd.addColorStop(0, "rgba(124,58,237,0.07)");
+      grd.addColorStop(0.5, "rgba(103,232,249,0.03)");
+      grd.addColorStop(1, "transparent");
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, W, H);
+
+      // Stars with twinkle
+      for (const s of stars) {
+        const twinkle = s.opacity * (0.6 + 0.4 * Math.sin(s.phase + now * s.speed * 1000));
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(240,230,255,${twinkle.toFixed(3)})`;
+        ctx.fill();
+      }
+
+      // Spawn meteors on interval
+      const nextSpawn = rand(500, 1500);
+      if (now - lastMeteorTime > nextSpawn) {
+        spawnMeteor(now);
+        lastMeteorTime = now;
+      }
+
+      // Draw meteors
+      meteors = meteors.filter(m => {
+        const age = now - m.born;
+        const fade = Math.max(0, 1 - age / 600);
+        if (fade <= 0) return false;
+
+        const dx = Math.cos(m.angle) * m.length;
+        const dy = Math.sin(m.angle) * m.length;
+        const tail = ctx.createLinearGradient(m.x, m.y, m.x + dx, m.y + dy);
+        tail.addColorStop(0, `rgba(255,255,255,0)`);
+        tail.addColorStop(1, `rgba(255,255,255,${(fade * 0.7).toFixed(3)})`);
+
+        ctx.beginPath();
+        ctx.moveTo(m.x, m.y);
+        ctx.lineTo(m.x + dx, m.y + dy);
+        ctx.strokeStyle = tail;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Bright core dot at head
+        ctx.beginPath();
+        ctx.arc(m.x + dx, m.y + dy, 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${(fade * 0.9).toFixed(3)})`;
+        ctx.fill();
+
+        // Glow halo
+        const halo = ctx.createRadialGradient(m.x + dx, m.y + dy, 0, m.x + dx, m.y + dy, 6);
+        halo.addColorStop(0, `rgba(167,139,250,${(fade * 0.4).toFixed(3)})`);
+        halo.addColorStop(1, "transparent");
+        ctx.fillStyle = halo;
+        ctx.beginPath();
+        ctx.arc(m.x + dx, m.y + dy, 6, 0, Math.PI * 2);
+        ctx.fill();
+
+        m.x += Math.cos(m.angle) * m.speed;
+        m.y += Math.sin(m.angle) * m.speed;
+        return true;
+      });
+    }
+
+    initStars();
+    animId = requestAnimationFrame(draw);
+
+    // Sync canvas size to card on resize
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(animId);
+      initStars();
+      animId = requestAnimationFrame(draw);
+    });
+    ro.observe(canvas.parentElement);
+  }
+
   function create(opts) {
     const o = Object.assign(
       {
@@ -552,6 +672,11 @@
       composer,
       footer
     );
+    const starCanvas = document.createElement("canvas");
+    starCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;display:block;";
+    card.prepend(starCanvas);
+    initStarfield(starCanvas);
+
     const launcher = h("button", { class: "launcher", type: "button", "aria-label": "Open Nova", title: "Ask Nova" }, avatar("launch"));
     card.dataset.view = "chat";
     const app = h("div", { class: "nova", "data-minimized": "false" }, card, launcher);

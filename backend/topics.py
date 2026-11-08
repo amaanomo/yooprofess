@@ -16,7 +16,8 @@ import statistics
 import threading
 import time
 
-DB_PATH = os.environ.get("NOVA_DB_PATH") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "nova.db")
+LOCAL_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nova.db")
+DB_PATH = os.environ.get("NOVA_DB_PATH") or LOCAL_DB_PATH
 MAX_QUESTIONS = 300  # newest questions considered per lecture
 MAX_THEMES = 6
 REBUILD_AFTER_NEW = 3  # rebuild themes once this many new questions came in...
@@ -39,11 +40,33 @@ Rules:
 - Write titles, summaries and examples in English."""
 
 
+def _usable_path(path):
+    """First DB path we can actually open: `path`, then backend/nova.db, then /tmp.
+
+    sqlite won't create missing folders, so NOVA_DB_PATH=/data/nova.db with no Volume
+    mounted at /data used to crash the server on boot. Now we create the folder, and if
+    it still can't be opened we log a warning and fall back instead of dying.
+    """
+    for candidate in dict.fromkeys([path, LOCAL_DB_PATH, "/tmp/nova.db"]):
+        try:
+            folder = os.path.dirname(candidate)
+            if folder:
+                os.makedirs(folder, exist_ok=True)
+            sqlite3.connect(candidate, timeout=10).close()
+        except (OSError, sqlite3.Error) as e:
+            print(f"[topics] can't open DB at {candidate}: {e}", flush=True)
+            continue
+        if candidate != path:
+            print(f"[topics] using {candidate} instead of {path}; Hot topics questions won't survive redeploys", flush=True)
+        return candidate
+    raise RuntimeError("no writable location for the Hot topics database")
+
+
 class QuestionStore:
     """Anonymous question log + cached themes, in one SQLite file."""
 
     def __init__(self, path=DB_PATH):
-        self.path = path
+        self.path = _usable_path(path)
         self.lock = threading.Lock()
         with self._db() as db:
             db.execute(

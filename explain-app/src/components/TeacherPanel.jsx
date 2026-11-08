@@ -1,3 +1,5 @@
+import { LiquidGlassButton } from './ui/apple-tahoe-liquid-glass-button.jsx'
+
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
 function AlienAvatar({ talking }) {
@@ -157,25 +159,9 @@ export default function TeacherPanel({ steps, index, busy, talking, onGoTo, onAs
           onFocus={(e) => { e.target.style.borderColor = '#7c3aed'; e.target.style.boxShadow = '0 0 0 2px rgba(124,58,237,0.25)' }}
           onBlur={(e) => { e.target.style.borderColor = '#252a4d'; e.target.style.boxShadow = 'none' }}
         />
-        <button
-          id="ask-btn"
-          type="submit"
-          disabled={busy}
-          style={{
-            padding: '8px 12px',
-            border: 'none',
-            borderRadius: 10,
-            background: 'linear-gradient(135deg, #7c3aed, #a855f7)',
-            color: '#fff',
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: busy ? 'default' : 'pointer',
-            opacity: busy ? 0.45 : 1,
-            transition: 'opacity 0.15s',
-          }}
-        >
+        <LiquidGlassButton id="ask-btn" type="submit" disabled={busy} active size="sm">
           Ask
-        </button>
+        </LiquidGlassButton>
       </form>
     </aside>
   )

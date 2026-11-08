@@ -45,7 +45,10 @@
 
   /** Static suggestion chips. Replaced by `chips` from /ask when the backend sends them. */
   const SUMMARY_PROMPT = "Summarize this lecture"; // the chip and the student message; sent to /summary, not /ask
-  const DEFAULT_CHIPS = ["Explain what was just said", "Give me an example", "Quiz me on this", SUMMARY_PROMPT];
+  const QUIZ_PROMPT = "Quiz me on this";
+  const DEFAULT_CHIPS = ["Explain what was just said", "Give me an example", QUIZ_PROMPT, SUMMARY_PROMPT];
+  const HINT_CHIP = "Hint";
+  const NEXT_QUIZ_CHIP = "Next question";
 
   /** Tried in order for the lecture title; falls back to document.title. */
   const TITLE_SELECTORS = [
@@ -100,7 +103,7 @@
   }
 
   /** POST <BACKEND_URL>/ask */
-  function buildAskPayload({ lectureId, currentTime, question, context, history, voice, language, frame, source, title }) {
+  function buildAskPayload({ lectureId, currentTime, question, context, history, voice, language, frame, source, title, quiz }) {
     const payload = {
       lecture_id: lectureId,
       current_time: Math.round(currentTime * 10) / 10,
@@ -108,10 +111,13 @@
       context: context.map((c) => ({ start: c.start, end: c.end, text: c.text })),
       history: buildHistory(history),
       voice: Boolean(voice),
-      // "typed" or "chip". Hot topics counts every real question (typed or spoken), never chip taps.
-      source: source === "chip" ? "chip" : "typed",
+      // "typed", "chip" or "quiz_answer". Hot topics counts every real question (typed or spoken),
+      // never chip taps or answers to a quiz.
+      source: source === "chip" || source === "quiz_answer" ? source : "typed",
       title,
     };
+    // Answering a short-answer quiz: the question and model answer, so the server can grade it.
+    if (quiz) payload.quiz = { question: quiz.question, answer: quiz.answer, explanation: quiz.explanation || "" };
     // Only when translated subtitles are on, e.g. "Spanish (Español)". The reply comes back in it.
     if (language) payload.language = language;
     // A JPEG of the video as the student sees it (base64, no data: prefix), so Nova can read slides.
@@ -152,12 +158,33 @@
     return { status: data && data.status === "empty" ? "empty" : "ok", topics, total, times, updatedAt: data && data.updated_at };
   }
 
-  /** Expected /ask response: { "reply": "...", "chips": ["...", ...] }  (chips optional). */
+  /**
+   * Expected /ask response: { "reply": "...", "chips": ["...", ...], "quiz": {...} }  (chips, quiz optional).
+   * quiz: { type: "mcq"|"short", question, options: [4 strings] (mcq), answer: "A"-"D" (mcq) or text,
+   *         explanation, hint }
+   */
   function readAskResponse(data) {
-    if (typeof data === "string") return { reply: data, chips: null };
+    if (typeof data === "string") return { reply: data, chips: null, quiz: null };
     const reply = data && (data.reply ?? data.answer ?? data.message);
     const chips = data && Array.isArray(data.chips) && data.chips.length ? data.chips : null;
-    return { reply: typeof reply === "string" && reply.trim() ? reply : null, chips };
+    return { reply: typeof reply === "string" && reply.trim() ? reply : null, chips, quiz: readQuiz(data && data.quiz) };
+  }
+
+  function readQuiz(q) {
+    if (!q || typeof q !== "object" || typeof q.question !== "string" || !q.question.trim()) return null;
+    const quiz = {
+      type: q.type === "mcq" ? "mcq" : "short",
+      question: q.question,
+      options: [],
+      answer: String(q.answer || ""),
+      explanation: typeof q.explanation === "string" ? q.explanation : "",
+      hint: typeof q.hint === "string" ? q.hint : "",
+    };
+    if (quiz.type === "mcq") {
+      if (!Array.isArray(q.options) || q.options.length !== 4 || !/^[A-D]$/.test(quiz.answer)) return null;
+      quiz.options = q.options.map(String);
+    }
+    return quiz.answer ? quiz : null;
   }
 
   /**
@@ -255,7 +282,13 @@
       cssUrl: chrome.runtime.getURL("overlay.css"),
       mascotUrl: chrome.runtime.getURL("icons/nova.png"),
       windowSeconds: CAPTION_WINDOW_SECONDS,
-      onSend: (text, source) => (text === SUMMARY_PROMPT ? summarize() : handleInput(text, { voice: false, source })),
+      onSend: (text, source) => {
+        if (text === SUMMARY_PROMPT) return summarize();
+        if (source === "chip" && text === HINT_CHIP) return showHint();
+        if (source === "chip" && text === NEXT_QUIZ_CHIP) return nextQuestion();
+        return handleInput(text, { voice: false, source });
+      },
+      onQuizAnswer: (msg, letter) => gradeMcq(msg, letter, { spoken: false }),
       onSummarize: () => summarize(),
       onExportNotes: exportNotes,
       onDownload: downloadJson,
@@ -328,6 +361,7 @@
     await loadSessions(lectureId);
     if (lectureId !== state.lectureId) return;
     overlay.setHistory(state.history);
+    overlay.setChips(chipsForChat());
     refreshSessionList();
     if (subs.offerVoice && subs.language && !subs.voice) offerVoiceResume();
     await loadCaptions();
@@ -923,7 +957,122 @@
         return runCommand(guess, actions, { spoken });
       }
     }
+    // Answering the open quiz question: multiple choice is graded right here,
+    // a short answer goes to the server with the model answer.
+    const quizMsg = source === "chip" ? null : openQuiz();
+    if (quizMsg) {
+      if (NEXT_RE.test(text.trim())) return nextQuestion({ spoken });
+      if (/^(hint|give me a hint|can i (get|have) a hint)\??$/i.test(text.trim())) return showHint({ spoken, text });
+      if (quizMsg.quiz.type === "mcq") {
+        const letter = [text, ...alternatives].map((g) => quizLetter(g, quizMsg.quiz)).find(Boolean);
+        if (letter) return gradeMcq(quizMsg, letter, { spoken, text });
+      } else {
+        return ask(text, { voice: spoken, source: "quiz_answer", quizMsg });
+      }
+    }
     await ask(text, { voice: spoken, source });
+  }
+
+  // ===========================================================================
+  // Quiz
+  // ===========================================================================
+
+  const NEXT_RE = /^(next( question| one)?|another( one| question)?|skip( it| this one)?|new question)[.!]?$/i;
+  // How speech recognition tends to write a lone option letter.
+  const SPOKEN_LETTERS = { a: "A", ay: "A", eh: "A", b: "B", be: "B", bee: "B", c: "C", see: "C", sea: "C", d: "D", dee: "D" };
+
+  /** The quiz question waiting for an answer: the latest real Nova reply, if it is an unanswered quiz. */
+  function openQuiz() {
+    for (let i = state.history.length - 1; i >= 0; i--) {
+      const m = state.history[i];
+      if (!m || m.role !== "nova" || m.local || m.error) continue;
+      return m.kind === "quiz" && m.quiz && m.quiz.state === "open" ? m : null;
+    }
+    return null;
+  }
+
+  /** "B", "b)", "option b", "I think it's bee", or the option's own text -> "B". Otherwise null. */
+  function quizLetter(text, quiz) {
+    const t = String(text || "").trim().toLowerCase().replace(/[.!?]+$/, "");
+    const m = t.match(/^(?:(?:i think|i'd say|i guess|my answer is|the answer is|answer|it's|it is|is it|option|letter|choice)\s+)*\(?([a-z]+)\)?$/);
+    if (m && SPOKEN_LETTERS[m[1]]) return SPOKEN_LETTERS[m[1]];
+    const i = quiz.options.findIndex((o) => o.trim().toLowerCase().replace(/[.!?]+$/, "") === t);
+    return i >= 0 ? "ABCD"[i] : null;
+  }
+
+  function quizText(quiz) {
+    return [quiz.question, ...quiz.options.map((o, i) => `${"ABCD"[i]}) ${o}`)].join("\n");
+  }
+
+  /** The question as one spoken sentence: "... Is it A, ..., B, ..., or D, ...?" */
+  function spokenQuiz(quiz) {
+    if (quiz.type !== "mcq") return quiz.question;
+    const opts = quiz.options.map((o, i) => `${"ABCD"[i]}, ${o.replace(/[.?!]+$/, "")}`);
+    return `${quiz.question} Is it ${opts.slice(0, -1).join(", ")}, or ${opts[opts.length - 1]}?`;
+  }
+
+  /** Chips that fit the chat's state: quiz actions while quizzing, the defaults otherwise. */
+  function chipsForChat() {
+    const open = openQuiz();
+    if (open) return [...(open.quiz.hint && !open.quiz.hintShown ? [HINT_CHIP] : []), NEXT_QUIZ_CHIP];
+    const last = [...state.history].reverse().find((m) => m && m.role === "nova" && !m.local && !m.error);
+    if (last && last.kind === "quiz-result") return [NEXT_QUIZ_CHIP, ...DEFAULT_CHIPS.filter((c) => c !== QUIZ_PROMPT)];
+    return DEFAULT_CHIPS;
+  }
+
+  function speakReply(text) {
+    const lang = currentLanguage();
+    voice.speak(text, lang ? lang.speechLang : "");
+  }
+
+  /** Grade a multiple-choice answer locally: lock the options, then say whether it was right. */
+  function gradeMcq(quizMsg, letter, { spoken = false, text } = {}) {
+    const quiz = quizMsg && quizMsg.quiz;
+    if (state.busy || !quiz || quiz.state !== "open") return;
+    const option = quiz.options["ABCD".indexOf(letter)];
+    const right = quiz.options["ABCD".indexOf(quiz.answer)];
+    const at = Date.now();
+    saveMessage({ role: "student", text: text || `${letter}) ${option}`, time: quizMsg.time, at });
+    overlay.addMessage({ role: "student", text: text || `${letter}) ${option}` });
+    quiz.state = "answered";
+    quiz.picked = letter;
+    overlay.refreshMessage(quizMsg);
+    const correct = letter === quiz.answer;
+    const reply = correct
+      ? `Correct. ${quiz.explanation}`.trim()
+      : `Not quite. The answer is ${quiz.answer}) ${right}. ${quiz.explanation}`.trim();
+    const msg = { role: "nova", kind: "quiz-result", correct, text: reply, question: quizText(quiz), time: quizMsg.time, at: at + 1 };
+    saveMessage(msg); // also persists the answered quiz
+    overlay.addMessage(msg);
+    overlay.setChips(chipsForChat());
+    if (spoken) speakReply(reply);
+  }
+
+  /** "Hint" chip: the quiz's hint, shown without asking the server. */
+  function showHint({ spoken = false, text = HINT_CHIP } = {}) {
+    const quizMsg = openQuiz();
+    if (state.busy || !quizMsg) return;
+    const hint = quizMsg.quiz.hint || "No hint for this one. Give it your best guess.";
+    quizMsg.quiz.hintShown = true;
+    saveMessage({ role: "student", text, at: Date.now(), local: true });
+    overlay.addMessage({ role: "student", text });
+    const msg = { role: "nova", text: `Hint: ${hint}`, at: Date.now(), local: true };
+    saveMessage(msg);
+    overlay.addMessage(msg);
+    overlay.setChips(chipsForChat());
+    if (spoken) speakReply(msg.text);
+  }
+
+  /** "Next question": skip the open quiz (showing its answer) and ask for a new one. */
+  function nextQuestion({ spoken = false } = {}) {
+    if (state.busy) return;
+    const quizMsg = openQuiz();
+    if (quizMsg) {
+      quizMsg.quiz.state = "skipped";
+      persistSessions();
+      overlay.refreshMessage(quizMsg);
+    }
+    return ask(NEXT_QUIZ_CHIP, { voice: spoken, source: "chip" });
   }
 
   function allVideos() {
@@ -1004,7 +1153,7 @@
   // Ask
   // ===========================================================================
 
-  async function ask(question, { voice: spoken = false, source = "input" } = {}) {
+  async function ask(question, { voice: spoken = false, source = "input", quizMsg = null } = {}) {
     if (overlay.isTopicsOpen()) overlay.showChat(); // answers (typed or spoken) appear in the chat
     if (state.busy) return;
     const lectureId = state.lectureId;
@@ -1014,7 +1163,8 @@
     const language = lang ? `${lang.english} (${lang.label})` : null;
     const frame = captureFrame();
     const history = state.history.slice(); // before this question is added
-    const payload = buildAskPayload({ lectureId, currentTime, question, context, history, voice: spoken, language, frame, source, title: state.title });
+    const quiz = quizMsg ? quizMsg.quiz : null;
+    const payload = buildAskPayload({ lectureId, currentTime, question, context, history, voice: spoken, language, frame, source, title: state.title, quiz });
 
     log(
       `/ask at ${formatTime(currentTime)} with ${context.length} caption lines` +
@@ -1034,7 +1184,7 @@
     overlay.showTyping(false);
     setBusy(false);
 
-    const { reply, chips } = res.ok ? readAskResponse(res.data) : { reply: null, chips: null };
+    const { reply, chips, quiz: newQuiz } = res.ok ? readAskResponse(res.data) : { reply: null, chips: null, quiz: null };
     if (!reply) {
       warn("/ask failed", res);
       overlay.addMessage({
@@ -1060,13 +1210,26 @@
     const msg = { role: "nova", text: clean, watch, question, time: payload.current_time, at: Date.now() };
     if (commandMsg) msg.local = true; // no "Deep Dive" on "Jumping to 7:48"
     if (res.stub) msg.stub = true;
+    if (newQuiz && !commandMsg) {
+      // A quiz question: options to click, no Deep Dive (it would give the answer away).
+      msg.kind = "quiz";
+      msg.quiz = { ...newQuiz, state: "open" };
+      msg.text = quizText(newQuiz);
+      msg.watch = null;
+    } else if (quiz) {
+      // The graded short answer. Its Deep Dive teaches the question, not "Quiz me on this".
+      quiz.state = "answered";
+      overlay.refreshMessage(quizMsg);
+      msg.kind = "quiz-result";
+      msg.correct = !/^\s*not quite/i.test(clean); // the server starts with "Correct." or "Not quite."
+      msg.question = quizText(quiz);
+    }
     saveMessage(msg);
     overlay.addMessage(msg);
-    if (chips) overlay.setChips(chips);
+    overlay.setChips(msg.kind ? chipsForChat() : chips || DEFAULT_CHIPS);
     // Spoken questions get spoken answers (unless the header toggle is set to text only),
     // in the subtitle language when one is picked (the answer is written in it).
-    const replyLang = currentLanguage();
-    if (spoken) voice.speak(clean, replyLang ? replyLang.speechLang : "");
+    if (spoken) speakReply(msg.quiz ? spokenQuiz(msg.quiz) : clean);
   }
 
   // ---- Export notes ------------------------------------------------------------
@@ -1239,7 +1402,7 @@
 
   function showSession() {
     overlay.setHistory(state.history);
-    overlay.setChips(DEFAULT_CHIPS);
+    overlay.setChips(chipsForChat());
     refreshSessionList();
   }
 

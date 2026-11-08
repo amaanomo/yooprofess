@@ -161,6 +161,7 @@
    * @param {(format: "md"|"html") => void} opts.onExportNotes  "Export notes" picked in the menu
    * @param {(id: string) => void} opts.onSwitchChat
    * @param {(msg: object) => void} opts.onExplain  "Explain in depth" clicked on an Nova reply
+   * @param {(msg: object, letter: string) => void} opts.onQuizAnswer  a multiple-choice option clicked on a quiz
    * @param {{code:string,label:string}[]} opts.subtitleLanguages
    * @param {(code: string|null) => void} opts.onSubtitleLanguage
    * @param {(mode: "translated"|"dual") => void} opts.onSubtitleMode
@@ -318,6 +319,7 @@
         onSwitchChat() {},
         onSeek() {},
         onExplain() {},
+        onQuizAnswer() {},
         subtitleLanguages: [],
         onSubtitleLanguage() {},
         onSubtitleMode() {},
@@ -686,6 +688,7 @@
     let busy = false;
     const notices = new Map(); // key -> notice element (caption status, subtitle status, ...)
     let typingEl = null;
+    const rowFor = new WeakMap(); // message object -> its row, so a quiz can be redrawn once answered
     let lastStatus = "";
     let baseStatus = { state: "waiting", text: "Looking for the video…" };
     let voiceEnabled = true;
@@ -890,9 +893,12 @@
     // ---- Message rendering ---------------------------------------------------
     function messageRow(msg) {
       const role = msg.role === "student" ? "student" : "nova";
+      const quiz = msg.quiz && typeof msg.quiz === "object" ? msg.quiz : null;
       const bubbleText = h("span", { class: "bubble-text" });
-      bubbleText.append(parseMd(msg.text));
+      bubbleText.append(parseMd(quiz ? quiz.question : msg.text));
       const bubble = h("div", { class: "bubble" }, bubbleText);
+      const quizEl = quiz ? quizBlock(msg, quiz) : null;
+      if (quizEl) bubble.append(quizEl);
       if (msg.stub) bubble.append(h("span", { class: "tag", text: "Demo reply (stub mode)" }));
       // msg.watch: one { start, end, label } (older saved chats) or a ranked array.
       const watches = Array.isArray(msg.watch) ? msg.watch : msg.watch ? [msg.watch] : [];
@@ -933,7 +939,7 @@
             )
           )
         );
-      } else if (role === "nova" && !msg.error && !msg.local && msg.at) {
+      } else if (role === "nova" && !msg.error && !msg.local && msg.at && wantsDeepDive(msg)) {
         // Opens the whiteboard lesson tab (onExplain is wired up in content.js).
         bubble.append(
           h("button", { class: "deep-dive-btn", type: "button", onclick: () => o.onExplain(msg) }, "Deep Dive")
@@ -942,7 +948,52 @@
       const row = h("div", { class: `msg msg--${role}${msg.error ? " msg--error" : ""}` });
       if (role === "nova") row.append(avatar("sm"));
       row.append(bubble);
+      rowFor.set(msg, row);
       return row;
+    }
+
+    // Quiz questions written as plain text (older chats, or a reply the app couldn't read as a quiz).
+    const QUIZ_LIKE_RE = /^\s*(Quiz:|[A-D]\)\s)/m;
+    const GRADED_RE = /^\s*(Correct|Not quite)\b/;
+
+    /**
+     * Deep Dive (a full whiteboard lesson) is for explanations. Quizzes only get it on a
+     * missed answer: never on the question (it would give the answer away) and not
+     * on a correct answer.
+     */
+    function wantsDeepDive(msg) {
+      if (msg.kind === "quiz") return false;
+      if (msg.kind === "quiz-result") return msg.correct === false;
+      const text = String(msg.text || "");
+      if (QUIZ_LIKE_RE.test(text)) return false;
+      if (GRADED_RE.test(text)) return /^\s*Not quite/.test(text);
+      return true;
+    }
+
+    /** Option buttons (multiple choice) or an "answer below" note (short answer) under a quiz question. */
+    function quizBlock(msg, quiz) {
+      const open = quiz.state !== "answered" && quiz.state !== "skipped";
+      if (quiz.type !== "mcq" || !Array.isArray(quiz.options)) {
+        const note = open ? "Type or say your answer below." : quiz.state === "skipped" ? `Skipped. Answer: ${quiz.answer}` : "";
+        return note ? h("div", { class: "quiz-note", text: note }) : null;
+      }
+      const letters = "ABCD";
+      return h(
+        "div",
+        { class: "quiz-options", role: "group", "aria-label": "Answer options" },
+        ...quiz.options.map((text, i) => {
+          const letter = letters[i];
+          let cls = "quiz-option";
+          if (!open && letter === quiz.answer) cls += " quiz-option--correct";
+          else if (!open && letter === quiz.picked) cls += " quiz-option--wrong";
+          return h(
+            "button",
+            { class: cls, type: "button", disabled: !open, onclick: () => o.onQuizAnswer(msg, letter) },
+            h("span", { class: "quiz-option-letter", text: letter }),
+            h("span", { class: "quiz-option-text", text: String(text) })
+          );
+        })
+      );
     }
 
     function appendRow(row) {
@@ -1307,9 +1358,15 @@
         scrollToBottom();
       },
 
-      /** msg: { role: "student" | "nova", text, stub?, error? } */
+      /** msg: { role: "student" | "nova", text, stub?, error?, kind?, quiz? } */
       addMessage(msg) {
         appendRow(messageRow(msg));
+      },
+
+      /** Redraw one message already in the chat (e.g. a quiz after it's answered). */
+      refreshMessage(msg) {
+        const row = rowFor.get(msg);
+        if (row && row.isConnected) row.replaceWith(messageRow(msg));
       },
 
       /**

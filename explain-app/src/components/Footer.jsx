@@ -64,7 +64,7 @@ export default function Footer({
         flexWrap: 'wrap',
         gap: 8,
         padding: '10px 24px 14px',
-        background: 'rgba(7,8,15,0.50)',
+        background: 'rgba(7,8,15,0.15)',
         borderTop: '1px solid #252a4d',
         position: 'relative',
         zIndex: 10,

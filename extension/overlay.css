@@ -239,6 +239,8 @@ button:disabled {
   right: 18px;
   z-index: 5;
   width: 260px;
+  max-height: min(520px, calc(100vh - 200px)); /* stays inside the card when many chats are saved */
+  overflow-y: auto;
   padding: 6px;
   background: #131629;
   color: var(--star);

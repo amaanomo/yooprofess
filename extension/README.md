@@ -10,6 +10,10 @@ extension/
 ├── background.js    toolbar button + all backend calls (BACKEND_URL, STUB_MODE)
 ├── content.js       lecture detection, captions, video tracking, chat (CAPTION_URL, request formats)
 ├── srt.js           SRT parser + caption-window helper, with tests (node srt.js)
+├── translator.js    translation scheduler: batches, priority, retries, cache (node translator.js)
+├── voice.js         spoken translation: speech sync and audio ducking (node voice.js)
+├── subtitles.js     translated-subtitle overlay over the video (its own Shadow DOM root)
+├── subtitles.css    the subtitle pill's styles
 ├── overlay.js       the Orbit card, built inside a Shadow DOM root
 ├── overlay.css      the card's styles (only apply inside the shadow root)
 └── icons/           toolbar icons; put the mascot here as orbit.png
@@ -34,8 +38,13 @@ After you edit a file, click the reload icon on Orbit's card in `chrome://extens
 | `CAPTION_WINDOW_SECONDS` | `content.js` | `90` | How much recent transcript goes with each question. |
 | `DEFAULT_CHIPS` | `content.js` | Explain what was just said / Give me an example / Quiz me on this | Suggestion chips shown until the backend sends its own. |
 | `TITLE_SELECTORS` | `content.js` | `#deliveryTitle`, ... | Where to look for the lecture title before falling back to `document.title`. |
-| `BACKEND_URL` | `background.js` | `http://localhost:8000` | Person 2's server. **If you change it, also update `host_permissions` in `manifest.json`.** |
-| `STUB_MODE` | `background.js` | `true` | `true`: no backend calls. Captions aren't uploaded, and questions get a canned reply that guides instead of answering (it names the timestamp and asks the student something back). `false`: real requests to `BACKEND_URL`. |
+| `SUBTITLE_LANGUAGES` | `content.js` | Spanish, Chinese, Hindi, Korean, Arabic, French, Portuguese, Vietnamese, Japanese | Languages offered for translated subtitles (`code` goes to `/translate`, `speechLang` picks a voice). |
+| `PANOPTO_LANGUAGE_IDS` | `content.js` | `{}` | **Unverified.** Panopto's `language=` numbers for professor-uploaded translations. Empty means always use `/translate`. |
+| `BATCH_SIZE`, `CONCURRENCY`, `RETRY_DELAYS_MS`, `LEAD_SECONDS` | `translator.js` | 60, 2, 1 s/3 s, 10 s | Lines per `/translate` call, calls at once, retry backoff, how far before the playhead to start. |
+| `START_WINDOW_S`, `MAX_RATE`, `DUCK_VOLUME`, `SPEECH_CPS` | `voice.js` | 1.5 s, 1.3×, 0.15, per language | Only speak a line within 1.5 s of its start; never speed up past 1.3×; professor's volume while Orbit speaks; characters per second used to fit lines. |
+| `PANOPTO_CAPTION_SELECTORS` | `subtitles.js` | guesses | **Unverified.** Panopto's own caption box; Orbit's pill sits 12px above it. |
+| `BACKEND_URL` | `background.js` | `https://yooprofess-production.up.railway.app` | Person 2's server. **If you change it, also update `host_permissions` in `manifest.json`.** |
+| `STUB_MODE` | `background.js` | `false` | `true`: no backend calls. Captions aren't uploaded, and questions get a canned reply that guides instead of answering (it names the timestamp and asks the student something back). `false`: real requests to `BACKEND_URL`. |
 
 ## Backend contract (proposal for Person 2 to confirm)
 
@@ -75,12 +84,37 @@ All request and response shapes are in one place: the **"Backend contract"** sec
 
 Nothing else is ever sent: only the lecture ID, title, captions, playback time and the student's questions.
 
+**`POST <BACKEND_URL>/translate`**: translated subtitles. The extension sends about 60 caption lines at a time, starting near where the student is watching.
+
+```json
+{ "lecture_id": "6f2c...", "target_language": "es", "title": "...",
+  "cues": [{ "i": 120, "start": 361.0, "end": 363.9, "text": "..." }] }
+```
+
+Response (one entry per input `i`; `"fallback": true` means the server couldn't translate that line):
+
+```json
+{ "translations": [{ "i": 120, "text": "..." }] }
+```
+
+`/ask` also gets an optional `"language"` (e.g. `"Spanish (Español)"`) when subtitles are on; the reply comes back in that language and keeps the `Watch:` line format.
+
+## Translated subtitles and spoken translation
+
+- **Turn on:** click the button on the right of the mint strip (`Subtitles: Off ▾`) and pick a language. Subtitles appear over the main video in a green pill with the Orbit planet and the language code, so they never look like Panopto's own captions.
+- **Translated / Dual:** Dual shows the professor's original line above the translation.
+- **🔊 Spoken translation:** reads each translated line aloud with the computer's built-in voice and lowers the professor's audio to 15%. It never imitates the professor. Turning it off restores the volume. After a page reload, click **Resume voice** in the chat (browsers need a click before playing audio).
+- Translation starts where the student is, then fills in the rest. Progress shows on the strip button and in the popover. Lines the server can't translate show the original text, and the popover offers **Retry**.
+- The setting is remembered across lectures; translations are cached per lecture and language.
+
 ## What gets stored
 
 All of it is in `chrome.storage.local`, keyed by lecture ID:
 
 - `orbit:captions:<lecture_id>`: parsed captions, so reloading the page doesn't fetch them again. **⋯ → Reload captions** fetches them fresh.
 - `orbit:chat:<lecture_id>`: the chat history, the last 200 messages. **⋯ → Clear chat** deletes it.
+- `orbit:translations:<lecture_id>:<language>`: translated subtitle lines, so a lecture is translated once per language.
+- `orbit:subtitles`: the chosen language, mode and voice setting (shared across lectures).
 
 To wipe everything, open the extension's service worker console (`chrome://extensions` → Orbit → "service worker") and run `chrome.storage.local.clear()`.
 
@@ -112,9 +146,32 @@ Expand the payload to check that `context` is the right stretch of the transcrip
 
 **Download:** **⋯ → Download captions JSON** saves `<lecture_id>.json`. The ⋯ menu also shows the lecture title and ID. Hovering over the header shows them as a tooltip.
 
-**Parser tests:** `node srt.js` (run from this folder; needs Node 18 or later).
+**Subtitles:**
+
+| State | How to trigger it | What you should see |
+|---|---|---|
+| Translating | Pick a language you haven't used on this lecture. | Strip button shows `ES ◔ 22%`; the pill says "Translating…" until the line arrives; console logs `Translations: 0/N cached`. |
+| Cached | Reload the page. | Subtitles appear immediately; console logs `Translations: N/N cached`; no new `/translate` calls. |
+| Seek to untranslated | Pick a language, then jump far ahead right away. | "Translating…" briefly, then that part is translated next. |
+| Backend down | `STUB_MODE = false` with no server. | The pill stays on "Translating…"; after retries the popover shows lines that couldn't be translated and a **Retry** button. |
+| Stub mode | `STUB_MODE = true`. | Fake translations like `[ES] original text`. |
+| Voice | Turn on 🔊 in the popover and play. | Lines are spoken as the video reaches them (`[Orbit voice] ...` in the console); professor's audio drops to 15% and comes back when you turn it off. |
+
+**Tests:** `node srt.js`, `node translator.js` and `node voice.js` (run from this folder; needs Node 18 or later).
 
 ## Check manually on real Panopto
+
+**Translation (new):**
+
+- **Caption box selector.** `PANOPTO_CAPTION_SELECTORS` in `subtitles.js` are guesses. Turn on Panopto's CC and check Orbit's pill sits just above it. If it overlaps, inspect Panopto's caption element and add its selector.
+- **Which video gets subtitles.** Orbit puts them on the largest visible video. Check it follows the ⇄ swap button.
+- **Which stream has the audio.** Voice mode turns down every video, so it should work either way; check the professor gets quieter.
+- **Panopto's own translations.** `PANOPTO_LANGUAGE_IDS` is empty; if your lectures have professor-uploaded translations, find their `language=` numbers and fill it in.
+- **Fullscreen and Canvas.** Subtitles move into Panopto's fullscreen element; check this with Panopto's real fullscreen button, and inside Canvas.
+- **Voices.** How the built-in voices sound depends on the computer. On a Mac, better voices can be added in System Settings → Accessibility → Spoken Content.
+- **Cost.** A 75-minute lecture is about 1,500 lines, so roughly 25 `/translate` calls per language, once per lecture (then cached in the browser and, until a restart, on the server).
+
+**Captions and playback (original):**
 
 These were tested against a fake Panopto and Canvas (a local HTTPS server on a `*.panopto.com` hostname, loading this unpacked extension in Chrome for Testing), not a real Panopto login. Please check them:
 

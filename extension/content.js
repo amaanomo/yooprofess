@@ -8,6 +8,7 @@
  *      caches them, and sends them to the backend through background.js
  *   3. follows the <video> element's playback time
  *   4. sends questions plus the last 90 seconds of captions to the backend
+ *   5. translated subtitles (translator.js + subtitles.js) and spoken translation (voice.js)
  *
  * Runs at document_start only so the keyboard guard is registered before
  * Panopto's own key handlers; everything else waits for the DOM.
@@ -44,6 +45,26 @@
   ];
 
   const MAX_SAVED_MESSAGES = 200;
+
+  /** Languages offered for translated subtitles. code is sent to /translate; speechLang picks a voice. */
+  const SUBTITLE_LANGUAGES = [
+    { code: "es", label: "Español", english: "Spanish", speechLang: "es-ES" },
+    { code: "zh-Hans", label: "中文 (简体)", english: "Simplified Chinese", speechLang: "zh-CN" },
+    { code: "hi", label: "हिन्दी", english: "Hindi", speechLang: "hi-IN" },
+    { code: "ko", label: "한국어", english: "Korean", speechLang: "ko-KR" },
+    { code: "ar", label: "العربية", english: "Arabic", speechLang: "ar-SA" },
+    { code: "fr", label: "Français", english: "French", speechLang: "fr-FR" },
+    { code: "pt", label: "Português", english: "Portuguese", speechLang: "pt-BR" },
+    { code: "vi", label: "Tiếng Việt", english: "Vietnamese", speechLang: "vi-VN" },
+    { code: "ja", label: "日本語", english: "Japanese", speechLang: "ja-JP" },
+  ];
+
+  /**
+   * TODO (unverified): Panopto's caption language numbers for the `language=` parameter
+   * of CAPTION_URL, e.g. { es: 1 }. When a lecture has a professor-uploaded translation
+   * in that language, Orbit uses it instead of machine translation. Empty = always use /translate.
+   */
+  const PANOPTO_LANGUAGE_IDS = {};
 
   // ===========================================================================
   // Backend contract. This is a PROPOSAL for Person 2 to confirm.
@@ -140,6 +161,9 @@
   };
   let overlay = null;
 
+  // Translated subtitles: language/mode/voice are the student's saved choices; the rest is runtime state.
+  const subs = { language: null, mode: "translated", voice: false, lastLanguage: null, translator: null, ui: null, voiceEngine: null, token: 0 };
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", start, { once: true });
   } else {
@@ -156,6 +180,12 @@
       onReloadCaptions: () => loadCaptions({ force: true }),
       onClearChat: clearChat,
       onSeek: seekTo,
+      subtitleLanguages: SUBTITLE_LANGUAGES,
+      onSubtitleLanguage: (code) => setSubtitleLanguage(code, { announce: true }),
+      onSubtitleMode: setSubtitleMode,
+      onVoiceToggle: setVoice,
+      onRetryTranslation: () => subs.translator && subs.translator.retryFailed(),
+      onLayoutChange: () => subs.ui && subs.ui.relayout(),
     });
 
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -168,6 +198,7 @@
 
     await overlay.mount();
     overlay.setChips(DEFAULT_CHIPS);
+    await initSubtitles();
     watchVideo();
     watchForLectureChange();
     await openLecture(state.lectureId);
@@ -177,6 +208,7 @@
   async function openLecture(lectureId) {
     state.lectureId = lectureId;
     state.captions = [];
+    stopTranslation();
     state.title = resolveTitle();
     log("Lecture detected", { id: lectureId, title: state.title, frame: window === window.top ? "top" : "iframe" });
     overlay.setLecture({ id: lectureId, title: state.title });
@@ -188,6 +220,7 @@
     state.history = (await storageGet(chatKey(lectureId))) || [];
     if (lectureId !== state.lectureId) return;
     overlay.setHistory(state.history);
+    if (subs.offerVoice && subs.language && !subs.voice) offerVoiceResume();
     await loadCaptions();
   }
 
@@ -323,6 +356,7 @@
     }
 
     state.captions = cues;
+    startTranslation();
     overlay.setDownloadEnabled(true);
     overlay.setContextLabel(`Using the last ${CAPTION_WINDOW_SECONDS} seconds of captions`);
     log(`Loaded ${cues.length} caption lines${fromCache ? " (from cache)" : ""}`);
@@ -445,10 +479,20 @@
       for (const type of VIDEO_EVENTS) next.addEventListener(type, onVideoEvent);
       log("Following video element", next.id ? `#${next.id}` : next);
     }
+    if (subs.voiceEngine) subs.voiceEngine.refreshDucking();
+    if (subs.ui) subs.ui.relayout();
     updatePlayback();
   }
 
-  function onVideoEvent() {
+  function onVideoEvent(event) {
+    if (event.type === "seeking") {
+      if (subs.translator) subs.translator.seek(getCurrentTime()); // translate where the student jumped to
+      if (subs.voiceEngine) subs.voiceEngine.reset();
+    } else if (subs.voice && subs.voiceEngine) {
+      if (event.type === "pause") subs.voiceEngine.pause();
+      else if (event.type === "play" || event.type === "playing") subs.voiceEngine.resume();
+      else if (event.type === "emptied") subs.voiceEngine.reset();
+    }
     updatePlayback();
   }
 
@@ -460,6 +504,7 @@
     }
     if (Number.isFinite(v.currentTime)) state.lastTime = v.currentTime;
     overlay.setPlayback({ state: v.paused || v.ended ? "paused" : "playing", time: state.lastTime });
+    refreshSubtitle();
   }
 
   function watchVideo() {
@@ -512,7 +557,9 @@
     const lectureId = state.lectureId;
     const currentTime = getCurrentTime();
     const context = getCaptionWindow(currentTime);
-    const payload = buildAskPayload({ lectureId, currentTime, question, context });
+    const lang = currentLanguage();
+    const language = lang ? `${lang.english} (${lang.label})` : null;
+    const payload = buildAskPayload({ lectureId, currentTime, question, context, language });
 
     log(
       `/ask at ${formatTime(currentTime)} with ${context.length} caption lines` +
@@ -567,6 +614,270 @@
     overlay.setHistory([]);
     overlay.setChips(DEFAULT_CHIPS);
     log("Chat cleared for", state.lectureId);
+  }
+
+  // ===========================================================================
+  // Part 5: translated subtitles + spoken translation
+  // ===========================================================================
+
+  const SUBTITLE_SETTINGS_KEY = "orbit:subtitles";
+  const translationsKey = (id, code) => `orbit:translations:${id}:${code}`;
+  const shortCode = (code) => String(code).split("-")[0].toUpperCase();
+
+  const currentLanguage = () => SUBTITLE_LANGUAGES.find((l) => l.code === subs.language) || null;
+
+  async function initSubtitles() {
+    subs.ui = OrbitSubtitles.create({ cssUrl: chrome.runtime.getURL("subtitles.css"), getCardRect: () => overlay.getCardRect() });
+    await subs.ui.mount();
+    subs.voiceEngine = OrbitVoice.create({
+      getVideos: () => document.querySelectorAll("video"),
+      onSpeaking: (on) => subs.ui.setSpeaking(on),
+    });
+    if (typeof speechSynthesis !== "undefined") speechSynthesis.addEventListener("voiceschanged", renderSubtitleControls);
+
+    const saved = (await storageGet(SUBTITLE_SETTINGS_KEY)) || {};
+    subs.mode = saved.mode === "dual" ? "dual" : "translated";
+    subs.lastLanguage = saved.lastLanguage || null;
+    const lang = SUBTITLE_LANGUAGES.find((l) => l.code === saved.language);
+    if (lang) {
+      subs.language = lang.code;
+      subs.ui.setEnabled(true);
+      subs.voiceEngine.setLanguage(lang);
+      // Browsers only allow audio after a click, so voice waits for one tap after a reload
+      // (the notice is shown once the chat is loaded, in openLecture).
+      subs.offerVoice = Boolean(saved.voice);
+    }
+    renderSubtitleControls();
+  }
+
+  function saveSubtitleSettings() {
+    storageSet(SUBTITLE_SETTINGS_KEY, { language: subs.language, mode: subs.mode, voice: subs.voice, lastLanguage: subs.lastLanguage });
+  }
+
+  function voiceNote() {
+    const engine = subs.voiceEngine;
+    const lang = currentLanguage();
+    if (!engine || !engine.available()) return { voiceNote: "This browser can't speak.", voiceWarn: true, canVoice: false };
+    if (!lang) return { voiceNote: "Pick a language first.", voiceWarn: false, canVoice: true };
+    if (!subs.voice) return { voiceNote: "Reads the translation aloud in sync with the video.", voiceWarn: false, canVoice: true };
+    const v = engine.voiceFor(lang.speechLang);
+    const duck = Math.round(OrbitVoice.DUCK_VOLUME * 100);
+    return v
+      ? { voiceNote: `Speaking with ${v.name}. Professor's audio lowered to ${duck}%.`, voiceWarn: false, canVoice: true }
+      : {
+          voiceNote: `No ${lang.label} voice on this computer, so the default voice is used. Install one in system settings.`,
+          voiceWarn: true,
+          canVoice: true,
+        };
+  }
+
+  function renderSubtitleControls() {
+    overlay.setSubtitles({
+      language: subs.language,
+      mode: subs.mode,
+      voice: subs.voice,
+      progress: subs.translator && state.captions.length ? subs.translator.info() : null,
+      ...voiceNote(),
+    });
+  }
+
+  /** "Ready" / "NN%" next to each language in the popover, from what's cached for this lecture. */
+  async function refreshLanguageStates() {
+    if (!state.captions.length) return;
+    const keys = SUBTITLE_LANGUAGES.map((l) => translationsKey(state.lectureId, l.code));
+    let stored = {};
+    try {
+      stored = await chrome.storage.local.get(keys);
+    } catch (_) {
+      return;
+    }
+    const states = {};
+    for (const l of SUBTITLE_LANGUAGES) {
+      const n = Object.keys(stored[translationsKey(state.lectureId, l.code)] || {}).length;
+      if (n >= state.captions.length) states[l.code] = "Ready";
+      else if (n > 0) states[l.code] = `${Math.floor((n / state.captions.length) * 100)}%`;
+    }
+    overlay.setSubtitles({ states });
+  }
+
+  function setSubtitleLanguage(code, { announce = false } = {}) {
+    const lang = SUBTITLE_LANGUAGES.find((l) => l.code === code) || null;
+    if ((lang && lang.code) === subs.language) return;
+    subs.language = lang ? lang.code : null;
+    if (lang) subs.lastLanguage = lang.code;
+    saveSubtitleSettings();
+    subs.voiceEngine.setLanguage(lang);
+    if (!lang) {
+      setVoice(false);
+      stopTranslation();
+      subs.ui.setEnabled(false);
+      overlay.clearNotice("subtitles");
+      overlay.clearNotice("voice");
+      renderSubtitleControls();
+      log("Subtitles off");
+      return;
+    }
+    subs.ui.setEnabled(true);
+    startTranslation();
+    if (announce) {
+      const info = subs.translator ? subs.translator.info() : null;
+      const needsWork = !info || info.done < info.total;
+      overlay.setNotice({
+        key: "subtitles",
+        kind: "success",
+        text: `Subtitles on in ${lang.label}.${needsWork && state.captions.length ? " Translating from where you are…" : ""}`,
+      });
+    }
+    log("Subtitles on:", lang.code);
+  }
+
+  function setSubtitleMode(mode) {
+    subs.mode = mode === "dual" ? "dual" : "translated";
+    saveSubtitleSettings();
+    renderSubtitleControls();
+    refreshSubtitle();
+  }
+
+  /** Called inside the switch's click handler, which is what lets the browser play speech. */
+  function setVoice(on) {
+    on = Boolean(on && subs.language);
+    if (on) subs.voiceEngine.prime();
+    subs.voice = on;
+    subs.voiceEngine.setEnabled(on);
+    subs.ui.setVoice(on);
+    overlay.clearNotice("voice");
+    subs.offerVoice = false;
+    saveSubtitleSettings();
+    renderSubtitleControls();
+    log(on ? "Spoken translation on" : "Spoken translation off");
+  }
+
+  function offerVoiceResume() {
+    overlay.setNotice({
+      key: "voice",
+      kind: "info",
+      text: "Spoken translation was on. Tap to turn the voice back on.",
+      actionLabel: "Resume voice",
+      onAction: () => setVoice(true),
+    });
+  }
+
+  function stopTranslation() {
+    subs.token++;
+    if (subs.translator) subs.translator.stop();
+    subs.translator = null;
+    if (subs.voiceEngine) subs.voiceEngine.reset();
+    if (subs.ui) subs.ui.render(null);
+  }
+
+  async function startTranslation() {
+    stopTranslation();
+    const lang = currentLanguage();
+    if (!lang || !state.captions.length) {
+      renderSubtitleControls();
+      return;
+    }
+    const token = subs.token;
+    const lectureId = state.lectureId;
+    const cues = state.captions;
+    const key = translationsKey(lectureId, lang.code);
+    let cache = (await storageGet(key)) || {};
+    if (token !== subs.token) return;
+
+    if (!Object.keys(cache).length && PANOPTO_LANGUAGE_IDS[lang.code] != null) {
+      const native = await fetchPanoptoTranslation(lectureId, lang.code, cues);
+      if (token !== subs.token) return;
+      if (native) {
+        cache = native;
+        await storageSet(key, cache);
+        log(`Using Panopto's own ${lang.code} captions`);
+      }
+    }
+    log(`Translations: ${Object.keys(cache).length}/${cues.length} cached (${lang.code})`);
+
+    subs.translator = OrbitTranslator.create({
+      cues,
+      cache,
+      getTime: getCurrentTime,
+      translateBatch: async (batch) => {
+        const payload = buildTranslatePayload({ lectureId, title: state.title, targetLanguage: lang.code, cues: batch });
+        const res = await sendToBackground({ type: "ORBIT_TRANSLATE", payload });
+        if (!res.ok) {
+          warn("/translate failed", res.error, res.status || "", res.detail || "");
+          return { ok: false };
+        }
+        return { ok: true, map: readTranslateResponse(res.data) };
+      },
+      onSave: (snapshot) => token === subs.token && storageSet(key, snapshot),
+      onChange: (info) => {
+        if (token !== subs.token) return;
+        renderSubtitleControls();
+        refreshSubtitle();
+        if (!info.active) refreshLanguageStates();
+      },
+    });
+    subs.translator.start();
+    renderSubtitleControls();
+    refreshSubtitle();
+    refreshLanguageStates();
+  }
+
+  /** Professor-uploaded captions in another language, matched to our cues by timing. */
+  async function fetchPanoptoTranslation(lectureId, code, cues) {
+    const url = buildCaptionUrl(lectureId).replace(/language=\d+/, `language=${PANOPTO_LANGUAGE_IDS[code]}`);
+    try {
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) return null;
+      const other = parseSRT(await res.text());
+      if (other.length !== cues.length) return null;
+      const map = {};
+      for (let i = 0; i < cues.length; i++) {
+        if (Math.abs(other[i].start - cues[i].start) > 0.5) return null; // timings don't line up
+        map[i] = other[i].text;
+      }
+      return map;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /** Show the line at the current time, and speak it if voice is on. */
+  function refreshSubtitle() {
+    if (!subs.ui) return;
+    const lang = currentLanguage();
+    if (!lang || !state.captions.length) {
+      subs.ui.render(null);
+      return;
+    }
+    const t = getCurrentTime();
+    const index = OrbitTranslator.cueIndexAt(state.captions, t);
+    if (index < 0) {
+      subs.ui.render(null);
+      return;
+    }
+    const cue = state.captions[index];
+    const tr = subs.translator;
+    const translation = tr ? tr.get(index) : null;
+    const failed = Boolean(!translation && tr && tr.isFailed(index));
+    subs.ui.render({
+      key: index,
+      langCode: shortCode(lang.code),
+      mode: subs.mode,
+      original: cue.text,
+      translation: translation || "",
+      pending: !translation && !failed,
+      failed,
+    });
+    const v = state.video;
+    subs.voiceEngine.lineAt({
+      index,
+      start: cue.start,
+      end: cue.end,
+      text: translation || null,
+      t,
+      playbackRate: v ? v.playbackRate : 1,
+      playing: Boolean(v && !v.paused && !v.ended),
+    });
   }
 
   // ===========================================================================

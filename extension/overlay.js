@@ -119,6 +119,12 @@
    * @param {() => void} opts.onDownload
    * @param {() => void} opts.onReloadCaptions
    * @param {() => void} opts.onClearChat
+   * @param {{code:string,label:string}[]} opts.subtitleLanguages
+   * @param {(code: string|null) => void} opts.onSubtitleLanguage
+   * @param {(mode: "translated"|"dual") => void} opts.onSubtitleMode
+   * @param {(on: boolean) => void} opts.onVoiceToggle  called inside the click (needed to unlock audio)
+   * @param {() => void} opts.onRetryTranslation
+   * @param {() => void} opts.onLayoutChange  card shown/hidden/minimized/restored
    */
   function create(opts) {
     const o = Object.assign(
@@ -132,6 +138,12 @@
         onReloadCaptions() {},
         onClearChat() {},
         onSeek() {},
+        subtitleLanguages: [],
+        onSubtitleLanguage() {},
+        onSubtitleMode() {},
+        onVoiceToggle() {},
+        onRetryTranslation() {},
+        onLayoutChange() {},
       },
       opts
     );
@@ -158,11 +170,13 @@
     const downloadItem = menuItem("download", "Download captions JSON", "download");
     const reloadItem = menuItem("refresh", "Reload captions", "reload");
     const clearItem = menuItem("trash", "Clear chat", "clear");
+    const subtitlesItem = menuItem("captions", "Subtitles…", "subtitles");
     downloadItem.disabled = true;
     const menu = h(
       "div",
       { class: "menu", role: "menu", hidden: true },
       h("div", { class: "menu-info" }, h("div", { class: "menu-label", text: "This lecture" }), menuTitle, menuId),
+      subtitlesItem,
       downloadItem,
       reloadItem,
       clearItem
@@ -183,8 +197,151 @@
       menu
     );
 
-    const contextText = h("span", { text: `Using the last ${o.windowSeconds} seconds of captions` });
-    const contextStrip = h("div", { class: "context" }, icon("captions"), contextText);
+    const contextText = h("span", { class: "ctx-text", text: `Using the last ${o.windowSeconds} seconds of captions` });
+
+    // ---- Translated subtitles: strip button + popover ------------------------
+    const shortCode = (code) => String(code).split("-")[0].toUpperCase();
+    function planet() {
+      const svg = document.createElementNS(SVG_NS, "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("aria-hidden", "true");
+      const body = document.createElementNS(SVG_NS, "circle");
+      for (const [k, v] of Object.entries({ cx: 12, cy: 12, r: 4.6, fill: "#2e6b57" })) body.setAttribute(k, v);
+      const ring = document.createElementNS(SVG_NS, "g");
+      ring.setAttribute("class", "ring");
+      const ellipse = document.createElementNS(SVG_NS, "ellipse");
+      for (const [k, v] of Object.entries({ cx: 12, cy: 12, rx: 10, ry: 3.6, fill: "none", stroke: "#2e6b57", "stroke-width": 1.6, transform: "rotate(-24 12 12)" }))
+        ellipse.setAttribute(k, v);
+      ring.append(ellipse);
+      svg.append(body, ring);
+      return h("span", { class: "mini-planet" }, svg);
+    }
+    function progressRing(pct) {
+      const svg = document.createElementNS(SVG_NS, "svg");
+      svg.setAttribute("viewBox", "0 0 16 16");
+      svg.setAttribute("class", "prog-ring");
+      svg.setAttribute("aria-hidden", "true");
+      const c = 2 * Math.PI * 6;
+      for (const [stroke, offset] of [["rgba(255,255,255,.3)", 0], ["#c6e86b", c * (1 - pct / 100)]]) {
+        const circle = document.createElementNS(SVG_NS, "circle");
+        for (const [k, v] of Object.entries({ cx: 8, cy: 8, r: 6, stroke, "stroke-dasharray": c, "stroke-dashoffset": offset }))
+          circle.setAttribute(k, v);
+        svg.append(circle);
+      }
+      return svg;
+    }
+
+    const sub = { language: null, mode: "translated", voice: false, progress: null, states: {}, voiceNote: "", voiceWarn: false, canVoice: true };
+    const subBtn = h("button", { class: "sub-btn off", type: "button", "aria-haspopup": "dialog", "aria-expanded": "false" });
+    const langList = h("div", { class: "sub-langs", role: "radiogroup", "aria-label": "Subtitle language" });
+    const modeTranslated = h("button", { type: "button", "data-mode": "translated", text: "Translated" });
+    const modeDual = h("button", { type: "button", "data-mode": "dual", text: "Dual", title: "The professor's original line above the translation" });
+    const modes = h("div", { class: "sub-modes", role: "group", "aria-label": "Subtitle mode" }, modeTranslated, modeDual);
+    const voiceSwitch = h("button", { class: "switch", type: "button", role: "switch", "aria-checked": "false", "aria-label": "Spoken translation" });
+    const voiceNote = h("span", { class: "voice-note" });
+    const voiceRow = h(
+      "div",
+      { class: "voice-row" },
+      h("div", { class: "voice-text" }, h("b", { text: "🔊 Spoken translation" }), voiceNote),
+      voiceSwitch
+    );
+    const progressText = h("span", { class: "sub-progress-text" });
+    const progressFill = h("i");
+    const retryBtn = h("button", { class: "sub-retry", type: "button", text: "Retry", hidden: true });
+    const progress = h(
+      "div",
+      { class: "sub-progress" },
+      h("div", { class: "sub-progress-row" }, progressText, retryBtn),
+      h("div", { class: "sub-bar" }, progressFill)
+    );
+    const pop = h(
+      "div",
+      { class: "sub-pop", role: "dialog", "aria-label": "Translated subtitles", hidden: true },
+      h("h4", { text: "Translated subtitles" }),
+      h("p", { class: "sub-intro", text: "Orbit translates the captions and shows them over the video." }),
+      langList,
+      h("div", { class: "sub-divider" }),
+      modes,
+      voiceRow,
+      progress,
+      h("p", { class: "sub-foot", text: "Panopto's own captions stay as they are; use its CC button." })
+    );
+    const contextStrip = h("div", { class: "context" }, icon("captions"), contextText, subBtn, pop);
+
+    function setPopOpen(open) {
+      pop.hidden = !open;
+      subBtn.setAttribute("aria-expanded", String(open));
+    }
+
+    function renderSubtitleControls() {
+      const lang = o.subtitleLanguages.find((l) => l.code === sub.language) || null;
+      const p = sub.progress;
+      const pct = p && p.total ? Math.floor((p.done / p.total) * 100) : 0;
+      const translating = Boolean(lang && p && p.active);
+
+      subBtn.className = `sub-btn ${lang ? "on" : "off"}${translating ? " busy" : ""}`;
+      const parts = [planet()];
+      if (!lang) parts.push(h("span", { text: "Subtitles: Off" }));
+      else if (translating) parts.push(h("span", { text: shortCode(lang.code) }), progressRing(pct), h("span", { text: `${pct}%` }));
+      else parts.push(h("span", { text: `${shortCode(lang.code)} · ${sub.voice ? "🔊 Voice" : sub.mode === "dual" ? "Dual" : "Translated"}` }));
+      parts.push(h("span", { class: "chev", "aria-hidden": "true", text: "▾" }));
+      subBtn.replaceChildren(...parts);
+      subBtn.setAttribute("aria-label", lang ? `Translated subtitles: ${lang.label}` : "Translated subtitles: off");
+
+      langList.replaceChildren(
+        ...[{ code: null, label: "Off" }, ...o.subtitleLanguages].map((l) => {
+          const checked = (l.code || null) === (sub.language || null);
+          const state = !l.code ? "" : checked ? (translating ? `${pct}%` : "On") : sub.states[l.code] || "";
+          return h(
+            "button",
+            { class: "sub-opt", type: "button", role: "radio", "aria-checked": String(checked), "data-code": l.code || "" },
+            h("span", { class: "sub-code", text: l.code ? shortCode(l.code) : "" }),
+            h("span", { class: "sub-label", text: l.label }),
+            h("span", { class: "sub-state", text: state })
+          );
+        })
+      );
+      for (const b of [modeTranslated, modeDual]) {
+        b.setAttribute("aria-pressed", String(b.dataset.mode === sub.mode));
+        b.disabled = !lang;
+      }
+      voiceSwitch.disabled = !lang || !sub.canVoice;
+      voiceSwitch.setAttribute("aria-checked", String(Boolean(lang && sub.voice)));
+      voiceNote.textContent = sub.voiceNote;
+      voiceNote.classList.toggle("warn", Boolean(sub.voiceWarn));
+
+      progress.hidden = !lang || !p;
+      if (lang && p) {
+        progressText.textContent =
+          p.done >= p.total
+            ? "Whole lecture translated"
+            : translating
+              ? `Translating… ${pct}% of this lecture`
+              : p.failed
+                ? `${pct}% translated · ${p.failed} line${p.failed === 1 ? "" : "s"} couldn't be translated`
+                : `${pct}% translated`;
+        progressFill.style.width = `${pct}%`;
+        retryBtn.hidden = !(p.failed && !translating);
+      }
+    }
+
+    subBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setMenuOpen(false);
+      setPopOpen(pop.hidden);
+    });
+    langList.addEventListener("click", (event) => {
+      const opt = event.target.closest(".sub-opt");
+      if (opt) o.onSubtitleLanguage(opt.dataset.code || null);
+    });
+    modes.addEventListener("click", (event) => {
+      const b = event.target.closest("button[data-mode]");
+      if (b && !b.disabled) o.onSubtitleMode(b.dataset.mode);
+    });
+    voiceSwitch.addEventListener("click", () => {
+      if (!voiceSwitch.disabled) o.onVoiceToggle(!sub.voice);
+    });
+    retryBtn.addEventListener("click", () => o.onRetryTranslation());
 
     const messages = h("div", { class: "messages", role: "log", "aria-live": "polite", "aria-label": "Conversation with Orbit" });
     const chips = h("div", { class: "chips", role: "group", "aria-label": "Suggested questions" });
@@ -218,7 +375,7 @@
 
     // ---- State + behaviour ---------------------------------------------------
     let busy = false;
-    let noticeEl = null;
+    const notices = new Map(); // key -> notice element (caption status, subtitle status, ...)
     let typingEl = null;
     let lastStatus = "";
 
@@ -282,13 +439,18 @@
       if (item.dataset.action === "download") o.onDownload();
       if (item.dataset.action === "reload") o.onReloadCaptions();
       if (item.dataset.action === "clear") o.onClearChat();
+      if (item.dataset.action === "subtitles") setPopOpen(true);
     });
-    // Close the menu on any click outside it (inside or outside the overlay).
+    // Close the menu / subtitles popover on any click outside them (inside or outside the overlay).
     shadow.addEventListener("click", (event) => {
-      if (!menu.hidden && !event.composedPath().includes(menu)) setMenuOpen(false);
+      const path = event.composedPath();
+      if (!menu.hidden && !path.includes(menu)) setMenuOpen(false);
+      if (!pop.hidden && !path.includes(pop) && !path.includes(subBtn) && !path.includes(subtitlesItem)) setPopOpen(false);
     });
     document.addEventListener("click", (event) => {
-      if (!menu.hidden && !event.composedPath().includes(host)) setMenuOpen(false);
+      if (event.composedPath().includes(host)) return;
+      if (!menu.hidden) setMenuOpen(false);
+      if (!pop.hidden) setPopOpen(false);
     });
 
     minBtn.addEventListener("click", () => api.minimize());
@@ -332,7 +494,11 @@
     }
 
     function onKey(event) {
-      if (event.key === "Escape" && !menu.hidden) {
+      if (event.key !== "Escape") return;
+      if (!pop.hidden) {
+        setPopOpen(false);
+        subBtn.focus();
+      } else if (!menu.hidden) {
         setMenuOpen(false);
         menuBtn.focus();
       }
@@ -350,6 +516,7 @@
         host.style.setProperty("visibility", "visible", "important");
         this.probeMascot();
         updateSendState();
+        renderSubtitleControls();
       },
 
       /** Use icons/orbit.png if it exists; otherwise avatars stay plain green circles. */
@@ -372,7 +539,9 @@
       },
       hide() {
         setMenuOpen(false);
+        setPopOpen(false);
         app.hidden = true;
+        o.onLayoutChange();
       },
       toggleVisible() {
         if (app.hidden) api.show();
@@ -381,12 +550,33 @@
       },
       minimize() {
         setMenuOpen(false);
+        setPopOpen(false);
         app.dataset.minimized = "true";
         launcher.focus({ preventScroll: true });
+        o.onLayoutChange();
       },
       restore() {
         app.dataset.minimized = "false";
         scrollToBottom();
+        o.onLayoutChange();
+      },
+
+      /** The open card's rectangle on screen, or null when it's minimized or hidden. */
+      getCardRect() {
+        if (app.hidden || app.dataset.minimized === "true" || !card.isConnected) return null;
+        const r = card.getBoundingClientRect();
+        return r.width ? r : null;
+      },
+
+      /** Update the subtitle controls. Pass any of: language, mode, voice, progress, states, voiceNote, voiceWarn, canVoice. */
+      setSubtitles(partial) {
+        Object.assign(sub, partial);
+        renderSubtitleControls();
+      },
+
+      openSubtitles() {
+        api.restore();
+        setPopOpen(true);
       },
 
       setLecture({ id, title: lectureTitle }) {
@@ -418,7 +608,7 @@
       /** Replace the whole conversation (welcome + saved history). Clears any notice. */
       setHistory(history) {
         typingEl = null;
-        noticeEl = null;
+        notices.clear();
         messages.replaceChildren(messageRow({ role: "orbit", text: o.welcome }));
         for (const msg of history || []) messages.append(messageRow(msg));
         scrollToBottom();
@@ -432,22 +622,24 @@
       /**
        * A status line in the chat (caption loading, errors, ...). Not part of the
        * saved history. kind: "loading" | "info" | "success" | "warn" | "error".
+       * key: notices with different keys coexist (e.g. "captions" and "subtitles").
        */
-      setNotice({ kind = "info", text, detail, actionLabel, onAction } = {}) {
-        if (noticeEl) noticeEl.remove();
+      setNotice({ key = "main", kind = "info", text, detail, actionLabel, onAction } = {}) {
+        if (notices.has(key)) notices.get(key).remove();
         const iconName = { success: "check", warn: "warn", error: "warn" }[kind] || "info";
         const lead = kind === "loading" ? h("span", { class: "spinner", "aria-hidden": "true" }) : icon(iconName, "notice-icon");
         const body = h("div", { class: "notice-body" }, h("div", { text }), detail ? h("div", { class: "notice-detail", text: detail }) : null);
-        noticeEl = h("div", { class: `notice notice--${kind}`, role: kind === "error" || kind === "warn" ? "alert" : "status" }, lead, body);
+        const el = h("div", { class: `notice notice--${kind}`, role: kind === "error" || kind === "warn" ? "alert" : "status" }, lead, body);
         if (actionLabel && onAction) {
-          noticeEl.append(h("button", { class: "notice-action", type: "button", text: actionLabel, onclick: onAction }));
+          el.append(h("button", { class: "notice-action", type: "button", text: actionLabel, onclick: onAction }));
         }
-        appendRow(noticeEl);
+        notices.set(key, el);
+        appendRow(el);
       },
 
-      clearNotice() {
-        if (noticeEl) noticeEl.remove();
-        noticeEl = null;
+      clearNotice(key = "main") {
+        if (notices.has(key)) notices.get(key).remove();
+        notices.delete(key);
       },
 
       showTyping(on) {

@@ -9,7 +9,7 @@ Gemini when GEMINI_API_KEY (or GOOGLE_API_KEY) is set, otherwise Claude when ANT
     export ELEVENLABS_API_KEY=...        # Nova's voice (falls back to free Chrome voices without it)
     python3 backend/server.py
 
-Models: GEMINI_MODEL (default gemini-3.5-flash-lite), NOVA_MODEL for Claude (default claude-sonnet-5-5).
+Models: NOVA_MODEL for chat (default claude-haiku-4-5-20251001), NOVA_EXPLAIN_MODEL for whiteboard (default claude-sonnet-4-6).
 
 Endpoints (see the "Backend contract" in extension/content.js):
   POST /lectures   store the full caption list for a lecture
@@ -57,7 +57,7 @@ import topics as hot_topics
 PORT = int(os.environ.get("PORT", "8000"))
 # /ask and /translate. (GEMINI_MODEL below is the whiteboard's model.)
 CHAT_GEMINI_MODEL = os.environ.get("NOVA_GEMINI_MODEL", "gemini-3.5-flash-lite")
-ANTHROPIC_MODEL = os.environ.get("NOVA_MODEL", "claude-sonnet-5-5")
+ANTHROPIC_MODEL = os.environ.get("NOVA_MODEL", "claude-haiku-4-5-20251001")
 
 
 def _pick_provider():
@@ -76,7 +76,7 @@ MODEL = CHAT_GEMINI_MODEL if PROVIDER == "gemini" else ANTHROPIC_MODEL
 
 # Whiteboard lessons (/explain). Uses Gemini when a Gemini key is available, otherwise Claude Haiku.
 # Force one with NOVA_EXPLAIN_PROVIDER=gemini|anthropic.
-EXPLAIN_MODEL = os.environ.get("NOVA_EXPLAIN_MODEL", "claude-haiku-5-5")  # cheap Claude model for whiteboard plans
+EXPLAIN_MODEL = os.environ.get("NOVA_EXPLAIN_MODEL", "claude-sonnet-4-6")  # Sonnet for richer whiteboard lesson plans
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash")  # tried if the first fails
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY") or (os.environ.get("GOOGLE_API_KEY") if PROVIDER == "gemini" else None)

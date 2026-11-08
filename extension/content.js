@@ -162,7 +162,17 @@
   let overlay = null;
 
   // Translated subtitles: language/mode/voice are the student's saved choices; the rest is runtime state.
-  const subs = { language: null, mode: "translated", voice: false, lastLanguage: null, translator: null, ui: null, voiceEngine: null, token: 0 };
+  const subs = {
+    language: null,
+    mode: "translated",
+    voice: false,
+    originalAudio: "muted", // professor's audio while voice is on: "muted" or "lowered"
+    lastLanguage: null,
+    translator: null,
+    ui: null,
+    voiceEngine: null,
+    token: 0,
+  };
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", start, { once: true });
@@ -184,6 +194,7 @@
       onSubtitleLanguage: (code) => setSubtitleLanguage(code, { announce: true }),
       onSubtitleMode: setSubtitleMode,
       onVoiceToggle: setVoice,
+      onOriginalAudio: setOriginalAudio,
       onRetryTranslation: () => subs.translator && subs.translator.retryFailed(),
       onLayoutChange: () => subs.ui && subs.ui.relayout(),
     });
@@ -637,6 +648,8 @@
 
     const saved = (await storageGet(SUBTITLE_SETTINGS_KEY)) || {};
     subs.mode = saved.mode === "dual" ? "dual" : "translated";
+    subs.originalAudio = saved.originalAudio === "lowered" ? "lowered" : "muted";
+    subs.voiceEngine.setOriginalAudio(subs.originalAudio);
     subs.lastLanguage = saved.lastLanguage || null;
     const lang = SUBTITLE_LANGUAGES.find((l) => l.code === saved.language);
     if (lang) {
@@ -651,7 +664,13 @@
   }
 
   function saveSubtitleSettings() {
-    storageSet(SUBTITLE_SETTINGS_KEY, { language: subs.language, mode: subs.mode, voice: subs.voice, lastLanguage: subs.lastLanguage });
+    storageSet(SUBTITLE_SETTINGS_KEY, {
+      language: subs.language,
+      mode: subs.mode,
+      voice: subs.voice,
+      originalAudio: subs.originalAudio,
+      lastLanguage: subs.lastLanguage,
+    });
   }
 
   function voiceNote() {
@@ -661,9 +680,12 @@
     if (!lang) return { voiceNote: "Pick a language first.", voiceWarn: false, canVoice: true };
     if (!subs.voice) return { voiceNote: "Reads the translation aloud in sync with the video.", voiceWarn: false, canVoice: true };
     const v = engine.voiceFor(lang.speechLang);
-    const duck = Math.round(OrbitVoice.DUCK_VOLUME * 100);
+    const audio =
+      subs.originalAudio === "lowered"
+        ? `Professor's audio lowered to ${Math.round(OrbitVoice.DUCK_VOLUME * 100)}%.`
+        : "Professor's audio is muted.";
     return v
-      ? { voiceNote: `Speaking with ${v.name}. Professor's audio lowered to ${duck}%.`, voiceWarn: false, canVoice: true }
+      ? { voiceNote: `Speaking with ${v.name}. ${audio}`, voiceWarn: false, canVoice: true }
       : {
           voiceNote: `No ${lang.label} voice on this computer, so the default voice is used. Install one in system settings.`,
           voiceWarn: true,
@@ -676,6 +698,7 @@
       language: subs.language,
       mode: subs.mode,
       voice: subs.voice,
+      originalAudio: subs.originalAudio,
       progress: subs.translator && state.captions.length ? subs.translator.info() : null,
       ...voiceNote(),
     });
@@ -750,6 +773,14 @@
     saveSubtitleSettings();
     renderSubtitleControls();
     log(on ? "Spoken translation on" : "Spoken translation off");
+  }
+
+  function setOriginalAudio(mode) {
+    subs.originalAudio = mode === "lowered" ? "lowered" : "muted";
+    subs.voiceEngine.setOriginalAudio(subs.originalAudio);
+    saveSubtitleSettings();
+    renderSubtitleControls();
+    log(`Professor's audio while speaking: ${subs.originalAudio}`);
   }
 
   function offerVoiceResume() {

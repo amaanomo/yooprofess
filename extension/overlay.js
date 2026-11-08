@@ -123,6 +123,7 @@
    * @param {(code: string|null) => void} opts.onSubtitleLanguage
    * @param {(mode: "translated"|"dual") => void} opts.onSubtitleMode
    * @param {(on: boolean) => void} opts.onVoiceToggle  called inside the click (needed to unlock audio)
+   * @param {(mode: "muted"|"lowered") => void} opts.onOriginalAudio  professor's audio while voice is on
    * @param {() => void} opts.onRetryTranslation
    * @param {() => void} opts.onLayoutChange  card shown/hidden/minimized/restored
    */
@@ -142,6 +143,7 @@
         onSubtitleLanguage() {},
         onSubtitleMode() {},
         onVoiceToggle() {},
+        onOriginalAudio() {},
         onRetryTranslation() {},
         onLayoutChange() {},
       },
@@ -231,7 +233,7 @@
       return svg;
     }
 
-    const sub = { language: null, mode: "translated", voice: false, progress: null, states: {}, voiceNote: "", voiceWarn: false, canVoice: true };
+    const sub = { language: null, mode: "translated", voice: false, originalAudio: "muted", progress: null, states: {}, voiceNote: "", voiceWarn: false, canVoice: true };
     const subBtn = h("button", { class: "sub-btn off", type: "button", "aria-haspopup": "dialog", "aria-expanded": "false" });
     const langList = h("div", { class: "sub-langs", role: "radiogroup", "aria-label": "Subtitle language" });
     const modeTranslated = h("button", { type: "button", "data-mode": "translated", text: "Translated" });
@@ -239,11 +241,20 @@
     const modes = h("div", { class: "sub-modes", role: "group", "aria-label": "Subtitle mode" }, modeTranslated, modeDual);
     const voiceSwitch = h("button", { class: "switch", type: "button", role: "switch", "aria-checked": "false", "aria-label": "Spoken translation" });
     const voiceNote = h("span", { class: "voice-note" });
+    const audioMuted = h("button", { type: "button", "data-audio": "muted", text: "Muted", title: "Only Orbit's voice is heard" });
+    const audioLowered = h("button", { type: "button", "data-audio": "lowered", text: "Lowered", title: "The professor stays audible, quietly" });
+    const audioModes = h("div", { class: "audio-modes", role: "group", "aria-label": "Professor's audio" }, audioMuted, audioLowered);
+    const audioRow = h("div", { class: "audio-row", hidden: true }, h("span", { text: "Professor's audio" }), audioModes);
     const voiceRow = h(
       "div",
       { class: "voice-row" },
-      h("div", { class: "voice-text" }, h("b", { text: "🔊 Spoken translation" }), voiceNote),
-      voiceSwitch
+      h(
+        "div",
+        { class: "voice-main" },
+        h("div", { class: "voice-text" }, h("b", { text: "🔊 Spoken translation" }), voiceNote),
+        voiceSwitch
+      ),
+      audioRow
     );
     const progressText = h("span", { class: "sub-progress-text" });
     const progressFill = h("i");
@@ -307,6 +318,8 @@
       }
       voiceSwitch.disabled = !lang || !sub.canVoice;
       voiceSwitch.setAttribute("aria-checked", String(Boolean(lang && sub.voice)));
+      audioRow.hidden = !(lang && sub.voice);
+      for (const b of [audioMuted, audioLowered]) b.setAttribute("aria-pressed", String(b.dataset.audio === sub.originalAudio));
       voiceNote.textContent = sub.voiceNote;
       voiceNote.classList.toggle("warn", Boolean(sub.voiceWarn));
 
@@ -337,6 +350,10 @@
     modes.addEventListener("click", (event) => {
       const b = event.target.closest("button[data-mode]");
       if (b && !b.disabled) o.onSubtitleMode(b.dataset.mode);
+    });
+    audioModes.addEventListener("click", (event) => {
+      const b = event.target.closest("button[data-audio]");
+      if (b) o.onOriginalAudio(b.dataset.audio);
     });
     voiceSwitch.addEventListener("click", () => {
       if (!voiceSwitch.disabled) o.onVoiceToggle(!sub.voice);

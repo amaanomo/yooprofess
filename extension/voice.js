@@ -15,7 +15,9 @@
   const START_WINDOW_S = 1.5; // only start a line if we're this close to its beginning
   const MAX_RATE = 1.3; // never speed up past this (before playbackRate)
   const SLOT_PADDING_S = 0.4; // leave a little breathing room at the end of each line
-  const DUCK_VOLUME = 0.15; // professor's audio while Orbit speaks
+  const DUCK_VOLUME = 0.15; // professor's audio in "lowered" mode
+  /** What happens to the professor's audio while voice is on: "muted" (only Orbit is heard) or "lowered". */
+  const DEFAULT_ORIGINAL_AUDIO = "muted";
   const MAX_BACKLOG = 2; // speaking + queued lines before we drop the backlog
   /** Rough characters spoken per second at rate 1.0, by language (base code). */
   const SPEECH_CPS = { es: 15, fr: 15, pt: 15, vi: 13, hi: 13, ar: 12, ko: 7, ja: 7, zh: 5 };
@@ -85,36 +87,43 @@
   function create(o) {
     const provider = o.provider || WebSpeechProvider;
     let enabled = false;
+    let originalAudio = o.originalAudio === "lowered" ? "lowered" : DEFAULT_ORIGINAL_AUDIO;
     let lang = null; // { code, speechLang }
     let inFlight = 0;
     let lastSpoken = -1;
     let generation = 0;
-    const ducked = new Map(); // video -> { prev, expected, managed }
+    const ducked = new Map(); // video -> { prevVolume, prevMuted, volume, muted, managed }
 
     function setSpeaking(on) {
       o.onSpeaking && o.onSpeaking(on);
     }
 
-    // volumechange fires asynchronously, so compare against the volume we set rather than using a flag.
+    // volumechange fires asynchronously, so compare against what we set rather than using a flag.
     function onVolumeChange(event) {
-      const entry = ducked.get(event.currentTarget);
-      if (entry && Math.abs(event.currentTarget.volume - entry.expected) > 0.001) entry.managed = false; // the student changed it
+      const v = event.currentTarget;
+      const entry = ducked.get(v);
+      if (entry && (v.muted !== entry.muted || Math.abs(v.volume - entry.volume) > 0.001)) entry.managed = false; // the student changed it
     }
 
     function duck() {
       for (const v of o.getVideos()) {
         if (ducked.has(v)) continue;
-        const expected = Math.min(v.volume, DUCK_VOLUME);
-        ducked.set(v, { prev: v.volume, expected, managed: true });
+        const target =
+          originalAudio === "muted" ? { volume: v.volume, muted: true } : { volume: Math.min(v.volume, DUCK_VOLUME), muted: v.muted };
+        ducked.set(v, { prevVolume: v.volume, prevMuted: v.muted, ...target, managed: true });
         v.addEventListener("volumechange", onVolumeChange);
-        v.volume = expected;
+        v.volume = target.volume;
+        v.muted = target.muted;
       }
     }
 
     function restore() {
       for (const [v, entry] of ducked) {
         v.removeEventListener("volumechange", onVolumeChange);
-        if (entry.managed && v.isConnected) v.volume = entry.prev;
+        if (entry.managed && v.isConnected) {
+          v.volume = entry.prevVolume;
+          v.muted = entry.prevMuted;
+        }
       }
       ducked.clear();
     }
@@ -150,6 +159,18 @@
         }
       },
       isEnabled: () => enabled,
+
+      /** "muted": only Orbit's voice is heard. "lowered": the professor stays audible at 15%. */
+      setOriginalAudio(mode) {
+        const next = mode === "lowered" ? "lowered" : "muted";
+        if (next === originalAudio) return;
+        originalAudio = next;
+        if (enabled) {
+          restore();
+          duck();
+        }
+      },
+      getOriginalAudio: () => originalAudio,
 
       /** New videos (Panopto swaps or adds streams) get turned down too. */
       refreshDucking() {
@@ -201,7 +222,7 @@
     return api;
   }
 
-  const api = { create, rateFor, shouldStart, pickVoice, SPEECH_CPS, DUCK_VOLUME, MAX_RATE };
+  const api = { create, rateFor, shouldStart, pickVoice, SPEECH_CPS, DUCK_VOLUME, MAX_RATE, DEFAULT_ORIGINAL_AUDIO };
   root.OrbitVoice = api;
 
   // ---------------------------------------------------------------------------
@@ -257,10 +278,13 @@
         resume() {},
         prime() {},
       };
-      const video = { volume: 0.8, isConnected: true, addEventListener() {}, removeEventListener() {} };
+      const video = { volume: 0.8, muted: false, isConnected: true, addEventListener() {}, removeEventListener() {} };
       const v = create({ provider, getVideos: () => [video] });
       v.setLanguage({ code: "es", speechLang: "es-ES" });
       v.setEnabled(true);
+      assert.equal(video.muted, true); // default: professor muted, only Orbit is heard
+      v.setOriginalAudio("lowered");
+      assert.equal(video.muted, false);
       assert.equal(video.volume, 0.15);
       const at = (index, t, text = "uno") => v.lineAt({ index, start: index * 5, end: index * 5 + 4.5, text, t, playbackRate: 1, playing: true });
       at(0, 0.2);
@@ -274,6 +298,7 @@
       assert.equal(cancels, before + 1);
       v.setEnabled(false);
       assert.equal(video.volume, 0.8);
+      assert.equal(video.muted, false);
     });
 
     let failed = 0;

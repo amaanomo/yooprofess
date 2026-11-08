@@ -41,7 +41,7 @@ After you edit a file, click the reload icon on Orbit's card in `chrome://extens
 | `SUBTITLE_LANGUAGES` | `content.js` | Spanish, Chinese, Hindi, Korean, Arabic, French, Portuguese, Vietnamese, Japanese | Languages offered for translated subtitles (`code` goes to `/translate`, `speechLang` picks a voice). |
 | `PANOPTO_LANGUAGE_IDS` | `content.js` | `{}` | **Unverified.** Panopto's `language=` numbers for professor-uploaded translations. Empty means always use `/translate`. |
 | `BATCH_SIZE`, `CONCURRENCY`, `RETRY_DELAYS_MS`, `LEAD_SECONDS` | `translator.js` | 60, 2, 1 s/3 s, 10 s | Lines per `/translate` call, calls at once, retry backoff, how far before the playhead to start. |
-| `START_WINDOW_S`, `MAX_RATE`, `DUCK_VOLUME`, `SPEECH_CPS` | `voice.js` | 1.5 s, 1.3×, 0.15, per language | Only speak a line within 1.5 s of its start; never speed up past 1.3×; professor's volume while Orbit speaks; characters per second used to fit lines. |
+| `START_WINDOW_S`, `MAX_RATE`, `DUCK_VOLUME`, `SPEECH_CPS` | `voice.js` | 1.5 s, 1.3×, 0.15, per language | Only speak a line within 1.5 s of its start; never speed up past 1.3×; professor's volume in **Lowered** mode (the default, **Muted**, silences them); characters per second used to fit lines. |
 | `PANOPTO_CAPTION_SELECTORS`, `BOTTOM_MARGIN` | `subtitles.js` | guesses, 4% | Orbit's pill sits near the bottom edge of the video (Panopto draws its own captions in a band below the video). If a caption box is ever drawn over the video, the pill sits 12px above it. |
 | `BACKEND_URL` | `background.js` | `https://yooprofess-production.up.railway.app` | Person 2's server. **If you change it, also update `host_permissions` in `manifest.json`.** |
 | `STUB_MODE` | `background.js` | `false` | `true`: no backend calls. Captions aren't uploaded, and questions get a canned reply that guides instead of answering (it names the timestamp and asks the student something back). `false`: real requests to `BACKEND_URL`. |
@@ -103,7 +103,7 @@ Response (one entry per input `i`; `"fallback": true` means the server couldn't 
 
 - **Turn on:** click the button on the right of the mint strip (`Subtitles: Off ▾`) and pick a language. Subtitles appear over the main video in a green pill with the Orbit planet and the language code, so they never look like Panopto's own captions.
 - **Translated / Dual:** Dual shows the professor's original line above the translation.
-- **🔊 Spoken translation:** reads each translated line aloud with the computer's built-in voice and lowers the professor's audio to 15%. It never imitates the professor. Turning it off restores the volume. After a page reload, click **Resume voice** in the chat (browsers need a click before playing audio).
+- **🔊 Spoken translation:** reads each translated line aloud with the computer's built-in voice. Under the switch, **Professor's audio** picks **Muted** (default: you only hear Orbit's translation) or **Lowered** (the professor stays audible at 15%). It never imitates the professor. Turning voice off restores the professor's audio exactly. After a page reload, click **Resume voice** in the chat (browsers need a click before playing audio).
 - Translation starts where the student is, then fills in the rest. Progress shows on the strip button and in the popover. Lines the server can't translate show the original text, and the popover offers **Retry**.
 - The setting is remembered across lectures; translations are cached per lecture and language.
 
@@ -155,7 +155,7 @@ Expand the payload to check that `context` is the right stretch of the transcrip
 | Seek to untranslated | Pick a language, then jump far ahead right away. | "Translating…" briefly, then that part is translated next. |
 | Backend down | `STUB_MODE = false` with no server. | The pill stays on "Translating…"; after retries the popover shows lines that couldn't be translated and a **Retry** button. |
 | Stub mode | `STUB_MODE = true`. | Fake translations like `[ES] original text`. |
-| Voice | Turn on 🔊 in the popover and play. | Lines are spoken as the video reaches them (`[Orbit voice] ...` in the console); professor's audio drops to 15% and comes back when you turn it off. |
+| Voice | Turn on 🔊 in the popover and play. | Lines are spoken as the video reaches them (`[Orbit voice] ...` in the console); the professor is muted (or at 15% with **Lowered**) and comes back when you turn voice off. |
 
 **Tests:** `node srt.js`, `node translator.js` and `node voice.js` (run from this folder; needs Node 18 or later).
 

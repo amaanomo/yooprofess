@@ -109,7 +109,7 @@ button:disabled {
 
 .header {
   position: relative;
-  z-index: 1;
+  z-index: 3; /* above the chat panels (z-index 1) so the ⋯ menu isn't drawn under them */
   flex: none;
   display: flex;
   align-items: center;
@@ -349,7 +349,7 @@ button:disabled {
 
 .context {
   position: relative;
-  z-index: 1;
+  z-index: 2; /* above the chat panels so the subtitles popover isn't drawn under them; below the header's menu */
   flex: none;
   display: flex;
   align-items: center;

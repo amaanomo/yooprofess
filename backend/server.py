@@ -1,42 +1,101 @@
 """
-Minimal Nova backend for local testing.
+Minimal Nova backend.
 
-    export ANTHROPIC_API_KEY=sk-ant-...   # for Claude (default)
-    export NOVA_PROVIDER=gemini          # switch to Gemini
-    export GOOGLE_API_KEY=...             # required when using Gemini
+Uses Gemini or Claude. Pick with NOVA_PROVIDER=gemini|anthropic; if unset, it uses
+Gemini when GEMINI_API_KEY (or GOOGLE_API_KEY) is set, otherwise Claude when ANTHROPIC_API_KEY is set.
+/ask and /translate use that provider. /explain (whiteboard lessons) has its own settings below.
+
+    export GEMINI_API_KEY=...            # or ANTHROPIC_API_KEY=sk-ant-...
     python3 backend/server.py
 
+Models: GEMINI_MODEL (default gemini-3.5-flash-lite), NOVA_MODEL for Claude (default claude-sonnet-5-5).
+
 Endpoints (see the "Backend contract" in extension/content.js):
-  POST /lectures  store the full caption list for a lecture
-  POST /ask       answer the question, then say which part of the lecture to watch
+  POST /lectures   store the full caption list for a lecture
+  POST /ask        answer the question, then say which part of the lecture to watch
+  POST /translate  translate a batch of caption cues for the subtitle overlay
 """
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PROVIDER = os.environ.get("NOVA_PROVIDER", "anthropic")  # provider for /ask
+PORT = int(os.environ.get("PORT", "8000"))
+# /ask and /translate. (GEMINI_MODEL below is the whiteboard's model.)
+CHAT_GEMINI_MODEL = os.environ.get("NOVA_GEMINI_MODEL", "gemini-3.5-flash-lite")
+ANTHROPIC_MODEL = os.environ.get("NOVA_MODEL", "claude-sonnet-5-5")
 
-# Whiteboard lessons (/explain). Uses Gemini's free tier when a Gemini key is available, otherwise Claude Haiku.
+
+def _pick_provider():
+    chosen = os.environ.get("NOVA_PROVIDER", "").strip().lower()
+    if chosen in ("gemini", "anthropic"):
+        return chosen
+    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+        return "gemini"
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    return "gemini"
+
+
+PROVIDER = _pick_provider()
+MODEL = CHAT_GEMINI_MODEL if PROVIDER == "gemini" else ANTHROPIC_MODEL
+
+# Whiteboard lessons (/explain). Uses Gemini when a Gemini key is available, otherwise Claude Haiku.
 # Force one with NOVA_EXPLAIN_PROVIDER=gemini|anthropic.
 EXPLAIN_MODEL = os.environ.get("NOVA_EXPLAIN_MODEL", "claude-haiku-5-5")  # cheap Claude model for whiteboard plans
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash")  # tried if the first fails
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY") or (os.environ.get("GOOGLE_API_KEY") if PROVIDER == "gemini" else None)
 EXPLAIN_PROVIDER = os.environ.get("NOVA_EXPLAIN_PROVIDER") or ("gemini" if GEMINI_KEY else "anthropic")
-PORT = int(os.environ.get("PORT", "8000"))
+_chat_client = None
 
-if PROVIDER == "gemini":
-    import google.generativeai as genai
-    genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
-    MODEL = os.environ.get("NOVA_MODEL", "gemini-2.0-flash")
-else:
-    import anthropic
-    client = anthropic.Anthropic()
-    MODEL = os.environ.get("NOVA_MODEL", "claude-sonnet-4-6")
+
+def chat_client():
+    """The provider's SDK client, created on first use so the module imports without a key or SDK."""
+    global _chat_client
+    if _chat_client is None:
+        if PROVIDER == "gemini":
+            from google import genai  # pip install google-genai; reads GEMINI_API_KEY
+
+            _chat_client = genai.Client()
+        else:
+            import anthropic  # pip install anthropic; reads ANTHROPIC_API_KEY
+
+            _chat_client = anthropic.Anthropic()
+    return _chat_client
+
+
+def complete(system, user, max_tokens, json_output=False):
+    """One model call, same shape for both providers. Returns the reply text ("" if none)."""
+    if PROVIDER == "gemini":
+        from google.genai import types
+
+        config = types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+            response_mime_type="application/json" if json_output else None,
+        )
+        resp = chat_client().models.generate_content(model=CHAT_GEMINI_MODEL, contents=user, config=config)
+        return (resp.text or "").strip()
+    msg = chat_client().messages.create(
+        model=ANTHROPIC_MODEL,
+        max_tokens=max_tokens,
+        system=[{"type": "text", "text": system}],
+        messages=[{"role": "user", "content": user}],
+    )
+    return "".join(b.text for b in msg.content if b.type == "text").strip()
+
 
 LECTURES = {}  # lecture_id -> {"title": str, "captions": [...]}
+TRANSLATIONS = {}  # (lecture_id, language_code, cue_index) -> translated text. In memory: lost on restart.
+MAX_TRANSLATE_CUES = 100
+
+LANGUAGE_NAMES = {
+    "es": "Spanish", "zh-Hans": "Simplified Chinese", "hi": "Hindi", "ko": "Korean", "ar": "Arabic",
+    "fr": "French", "pt": "Portuguese (Brazil)", "vi": "Vietnamese", "ja": "Japanese",
+}
 
 SYSTEM = """You are Nova, an expert tutor following along with a recorded lecture. Answer like a professor who knows the field thoroughly.
 
@@ -52,6 +111,20 @@ Structure every answer as:
 End with a line starting "Watch:" as a time range in M:SS (or H:MM:SS) from the transcript, plus a short description, e.g. "Watch: 12:33-14:08, where the professor explains CoT."
 If the transcript does not cover the question, skip "In this lecture:" and answer from your full knowledge, omitting the Watch line.
 Never invent timestamps that are not in the transcript."""
+
+TRANSLATE_SYSTEM = """You translate captions from a recorded university lecture into {language} for a student watching it.
+
+You receive a JSON array of caption cues, each {{"i": <index>, "text": <English caption>}}, in playback order.
+Return JSON only, no prose and no code fence: {{"translations": [{{"i": <index>, "text": <translation>}}, ...]}}
+with exactly one entry per input cue and the same "i" values.
+
+Rules:
+- Captions are split mid-sentence. Read the neighbouring cues (and the lecture title) for context so each piece reads naturally,
+  but translate each cue's own words into that cue. Never move words from one cue into another, never merge or drop cues.
+- Keep each line short enough to read as a subtitle.
+- Keep code, identifiers, math, Big-O notation, numbers and proper nouns exactly as written.
+- Keep the course's technical terms; the first time a key term appears you may add the English term in parentheses.
+- If a cue is only a noise tag like [music] or [inaudible], translate the tag."""
 
 
 def fmt(t):
@@ -84,22 +157,81 @@ def ask(body):
         transcript = transcript_text(body.get("context") or [])
         title = "(unknown)"
     now = fmt(body.get("current_time") or 0)
-    user_msg = (
+    system = SYSTEM
+    language = str(body.get("language") or "").strip()
+    if language:
+        # The extension parses the Watch line, so it must keep its exact English format.
+        system += (
+            f"\n\nReply in {language}. Keep the final line exactly in the form "
+            '"Watch: M:SS-M:SS, <description>" with the word "Watch:" in English; '
+            "the description may be in the reply language."
+        )
+    user = (
         f"Lecture: {title}\n\nTranscript:\n{transcript}\n\n"
         f"The student is paused at {now}.\nQuestion: {body.get('question', '')}"
     )
-    if PROVIDER == "gemini":
-        gmodel = genai.GenerativeModel(MODEL, system_instruction=SYSTEM)
-        response = gmodel.generate_content(user_msg)
-        return response.text.strip()
-    else:
-        msg = client.messages.create(
-            model=MODEL,
-            max_tokens=600,
-            system=[{"type": "text", "text": SYSTEM}],
-            messages=[{"role": "user", "content": user_msg}],
-        )
-        return "".join(b.text for b in msg.content if b.type == "text").strip()
+    return complete(system, user, max_tokens=2048)
+
+
+def _parse_translations(text):
+    """Pull {"translations": [...]} out of the model's reply (tolerates a code fence or stray prose)."""
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        data = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return {}
+    out = {}
+    for item in data.get("translations", []) if isinstance(data, dict) else []:
+        if isinstance(item, dict) and isinstance(item.get("i"), int) and isinstance(item.get("text"), str):
+            out[item["i"]] = item["text"].strip()
+    return out
+
+
+def _model_translate(language, title, cues):
+    user = f"Lecture title: {title or '(unknown)'}\n\nCues:\n" + json.dumps(
+        [{"i": c["i"], "text": c["text"]} for c in cues], ensure_ascii=False
+    )
+    return _parse_translations(complete(TRANSLATE_SYSTEM.format(language=language), user, max_tokens=8192, json_output=True))
+
+
+class BadRequest(Exception):
+    pass
+
+
+def translate(body, model_translate=_model_translate):
+    lecture_id = str(body.get("lecture_id") or "")
+    code = str(body.get("target_language") or "")
+    cues = body.get("cues") or []
+    if not lecture_id or not code or not isinstance(cues, list) or not cues:
+        raise BadRequest("lecture_id, target_language and a non-empty cues list are required")
+    if len(cues) > MAX_TRANSLATE_CUES:
+        raise BadRequest(f"at most {MAX_TRANSLATE_CUES} cues per request")
+    if not all(isinstance(c, dict) and isinstance(c.get("i"), int) and isinstance(c.get("text"), str) for c in cues):
+        raise BadRequest('each cue needs an integer "i" and a string "text"')
+
+    language = LANGUAGE_NAMES.get(code, code)
+    done = {c["i"]: TRANSLATIONS[(lecture_id, code, c["i"])] for c in cues if (lecture_id, code, c["i"]) in TRANSLATIONS}
+    todo = [c for c in cues if c["i"] not in done]
+    for _attempt in range(2):  # one call, plus one retry for anything the model skipped
+        if not todo:
+            break
+        got = model_translate(language, body.get("title", ""), todo)
+        for c in todo:
+            if got.get(c["i"]):
+                done[c["i"]] = got[c["i"]]
+                TRANSLATIONS[(lecture_id, code, c["i"])] = got[c["i"]]
+        todo = [c for c in todo if c["i"] not in done]
+
+    out = []
+    for c in cues:
+        if c["i"] in done:
+            out.append({"i": c["i"], "text": done[c["i"]]})
+        else:  # still missing after the retry: send the original so the timing stays intact
+            out.append({"i": c["i"], "text": c["text"], "fallback": True})
+    print(f"translated {lecture_id} -> {code}: {len(cues)} cues ({len(todo)} fallback)")
+    return {"translations": out}
 
 
 EXPLAIN_SYSTEM = """You are Professor Nova, a patient tutor teaching a concept on a whiteboard to a student who is meeting it for the first time.
@@ -361,9 +493,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
             if self.path == "/ask":
                 return self._send(200, {"reply": ask(body)})
+            if self.path == "/translate":
+                return self._send(200, translate(body))
             if self.path == "/explain":
                 return self._send(200, explain(body))
             self._send(404, {"error": "not found"})
+        except BadRequest as e:
+            self._send(400, {"error": str(e)})
         except Exception as e:  # surface errors to the extension
             print("error:", e)
             self._send(500, {"error": str(e)})
@@ -372,7 +508,7 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     explain_model = GEMINI_MODEL if EXPLAIN_PROVIDER == "gemini" else EXPLAIN_MODEL
     print(
-        f"Nova backend on http://localhost:{PORT} | /ask: {PROVIDER}/{MODEL} | /explain: {EXPLAIN_PROVIDER}/{explain_model}",
+        f"Nova backend on http://localhost:{PORT} | /ask + /translate: {PROVIDER}/{MODEL} | /explain: {EXPLAIN_PROVIDER}/{explain_model}",
         flush=True,
     )
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

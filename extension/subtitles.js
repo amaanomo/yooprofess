@@ -122,8 +122,11 @@
     const code = el("span", "code");
     const waves = el("span", "waves");
     waves.append(el("i"), el("i"), el("i"));
+    // Nova's avatar (the same alien as in the card), on the card's purple orb.
     const planet = el("span", "planet");
-    planet.append(planetSvg());
+    const face = el("span", "face");
+    face.append(root.NovaOverlay && root.NovaOverlay.alienSvg ? root.NovaOverlay.alienSvg() : planetSvg());
+    planet.append(face, el("span", "orbit-ring"));
     const lang = el("span", "lang");
     lang.append(code, waves);
     const badge = el("div", "badge");

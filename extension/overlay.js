@@ -13,6 +13,34 @@
 
   const SVG_NS = "http://www.w3.org/2000/svg";
 
+  // Cute alien SVG for Nova's avatar (static markup, no user content).
+  function alienSvg() {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 60 60");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("aria-hidden", "true");
+    svg.style.cssText = "width:100%;height:100%;display:block;";
+    // Static alien face — safe to use innerHTML here (no user data).
+    svg.innerHTML =
+      '<ellipse cx="30" cy="36" rx="19" ry="20" fill="#7ee8a2"/>' +
+      '<line x1="22" y1="17" x2="17" y2="7" stroke="#7ee8a2" stroke-width="2.5" stroke-linecap="round"/>' +
+      '<circle cx="16" cy="5.5" r="3.5" fill="#c084fc"/>' +
+      '<circle cx="16" cy="5.5" r="1.5" fill="#f0e6ff"/>' +
+      '<line x1="38" y1="17" x2="43" y2="7" stroke="#7ee8a2" stroke-width="2.5" stroke-linecap="round"/>' +
+      '<circle cx="44" cy="5.5" r="3.5" fill="#c084fc"/>' +
+      '<circle cx="44" cy="5.5" r="1.5" fill="#f0e6ff"/>' +
+      '<ellipse cx="22" cy="34" rx="6.5" ry="7.5" fill="white"/>' +
+      '<ellipse cx="38" cy="34" rx="6.5" ry="7.5" fill="white"/>' +
+      '<circle cx="23" cy="35" r="4" fill="#1a0533"/>' +
+      '<circle cx="39" cy="35" r="4" fill="#1a0533"/>' +
+      '<circle cx="24.5" cy="33" r="1.4" fill="white"/>' +
+      '<circle cx="40.5" cy="33" r="1.4" fill="white"/>' +
+      '<path d="M23 44 Q30 50 37 44" stroke="#2d6a4f" stroke-width="2.2" stroke-linecap="round" fill="none"/>' +
+      '<ellipse cx="16" cy="41" rx="3.2" ry="1.9" fill="rgba(192,132,252,0.45)"/>' +
+      '<ellipse cx="44" cy="41" rx="3.2" ry="1.9" fill="rgba(192,132,252,0.45)"/>';
+    return svg;
+  }
+
   // Icon paths (24x24, stroked).
   const ICONS = {
     minimize: ["M6 12h12"],
@@ -161,7 +189,11 @@
     const shadow = host.attachShadow({ mode: "open" });
 
     // ---- Build the DOM -------------------------------------------------------
-    const avatar = (size) => h("span", { class: `avatar avatar--${size}`, "aria-hidden": "true" });
+    const avatar = (size) => {
+      const el = h("span", { class: `avatar avatar--${size}`, "aria-hidden": "true" });
+      el.append(alienSvg());
+      return el;
+    };
 
     const statusText = h("span", { class: "status-text", text: "Looking for the video…" });
     const status = h("div", { class: "status", "data-state": "waiting" }, h("span", { class: "dot" }), statusText);
@@ -210,11 +242,11 @@
       svg.setAttribute("viewBox", "0 0 24 24");
       svg.setAttribute("aria-hidden", "true");
       const body = document.createElementNS(SVG_NS, "circle");
-      for (const [k, v] of Object.entries({ cx: 12, cy: 12, r: 4.6, fill: "#2e6b57" })) body.setAttribute(k, v);
+      for (const [k, v] of Object.entries({ cx: 12, cy: 12, r: 4.6, fill: "#a78bfa" })) body.setAttribute(k, v);
       const ring = document.createElementNS(SVG_NS, "g");
       ring.setAttribute("class", "ring");
       const ellipse = document.createElementNS(SVG_NS, "ellipse");
-      for (const [k, v] of Object.entries({ cx: 12, cy: 12, rx: 10, ry: 3.6, fill: "none", stroke: "#2e6b57", "stroke-width": 1.6, transform: "rotate(-24 12 12)" }))
+      for (const [k, v] of Object.entries({ cx: 12, cy: 12, rx: 10, ry: 3.6, fill: "none", stroke: "#a78bfa", "stroke-width": 1.6, transform: "rotate(-24 12 12)" }))
         ellipse.setAttribute(k, v);
       ring.append(ellipse);
       svg.append(body, ring);
@@ -226,7 +258,7 @@
       svg.setAttribute("class", "prog-ring");
       svg.setAttribute("aria-hidden", "true");
       const c = 2 * Math.PI * 6;
-      for (const [stroke, offset] of [["rgba(255,255,255,.3)", 0], ["#c6e86b", c * (1 - pct / 100)]]) {
+      for (const [stroke, offset] of [["rgba(167,139,250,.25)", 0], ["#67e8f9", c * (1 - pct / 100)]]) {
         const circle = document.createElementNS(SVG_NS, "circle");
         for (const [k, v] of Object.entries({ cx: 8, cy: 8, r: 6, stroke, "stroke-dasharray": c, "stroke-dashoffset": offset }))
           circle.setAttribute(k, v);

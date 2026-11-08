@@ -718,12 +718,24 @@ function stubAskReply(payload) {
   const quote = last ? ` "${last.length > 90 ? last.slice(0, 87).trimEnd() + "…" : last}"` : "";
   const q = String(payload.question || "").toLowerCase();
 
+  if (payload.source === "quiz_answer") {
+    return { reply: `Not quite. The model answer: ${payload.quiz ? payload.quiz.answer : "see the lecture"}.`, chips: ["Next question"] };
+  }
+  if (/quiz|test me|next question/.test(q)) {
+    // Same shape as the real /ask quiz turn.
+    const quiz = {
+      type: "mcq",
+      question: `What was the professor doing just before ${now}?`,
+      options: ["Defining a new term", "Working through an example", "Reviewing last lecture", "Answering a student question"],
+      answer: "B",
+      explanation: "(Demo) In stub mode the answer is always B.",
+      hint: "Think about what was on the board.",
+    };
+    const reply = [quiz.question, ...quiz.options.map((o, i) => `${"ABCD"[i]}) ${o}`)].join("\n");
+    return { reply, quiz, chips: ["Hint"] };
+  }
   let reply;
-  if (/quiz|test me/.test(q)) {
-    reply =
-      `Let's check. Without rewinding: what was the main point the professor made just before ${now}? ` +
-      `Answer in one or two sentences, and I'll point you to the part of the lecture that confirms it.`;
-  } else if (/example/.test(q)) {
+  if (/example/.test(q)) {
     reply =
       `Let's build one together. Around ${now} the professor said${quote || " something worth unpacking"}. ` +
       `Can you think of a situation where that idea would apply? Give it a try and I'll help you sharpen it.`;

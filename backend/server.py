@@ -31,7 +31,10 @@ Settings: ELEVENLABS_TTS_MODEL (default eleven_flash_v2_5), ELEVENLABS_STT_MODEL
 ELEVENLABS_DEFAULT_VOICE (default Brian, a built-in voice). A local .env file is loaded if python-dotenv is installed.
 
 /ask also takes "history" (recent chat turns, for follow-ups) and "voice" (the question
-was spoken: answer briefly for text-to-speech). The extension uses ElevenLabs when the
+was spoken: answer briefly for text-to-speech). Quiz turns come back as
+{reply, quiz: {type, question, options, answer, explanation, hint}, chips}; a short-answer
+reply is sent back with source "quiz_answer" and the quiz, and is graded by the model.
+The extension uses ElevenLabs when the
 server has a key ("auto" engine) and falls back to free Chrome voices otherwise.
 """
 import base64
@@ -186,8 +189,9 @@ Match the shape to what the student asked for:
 - Explain (e.g. "explain what was just said", "what does X mean"): the one-line answer, then 2-4 bullets covering the key parts or steps.
 - "What was just said" / "that" / "this" with no other referent means the part of the transcript in roughly the 2 minutes before the paused timestamp. Focus there.
 - Example: give one fresh, concrete example with real numbers or names, in 2-4 sentences or a short numbered walkthrough. If the professor gave their own example, mention it in one sentence and add a Watch line for it.
-- Quiz me: ask exactly ONE question about the recent material, either multiple choice (options on separate lines as "A) ...", "B) ...", "C) ...", "D) ...") or a short-answer question. Do NOT give the answer or hints, and add no Watch line.
-- When the student answers a quiz question from the earlier conversation: start with "Correct." or "Not quite." then explain why in 1-2 sentences (give the right answer if they missed it), then ask "Want another one?"
+- Quiz me (e.g. "quiz me on this", "test me", "next question"): write exactly ONE question about the recent material. Reply with ONLY one line, nothing else (no Watch line):
+Quiz: {"type": "mcq", "question": "...", "options": ["...", "...", "...", "..."], "answer": "B", "explanation": "...", "hint": "..."}
+"type" is "mcq" (exactly 4 options, no "A)" prefixes, "answer" is the letter A-D of the correct option) or "short" (a short-answer question: "options" is [], "answer" is a model answer in a few words). "explanation" says in 1-2 sentences why the answer is right. "hint" is one nudge that does not give the answer away. Prefer mcq; vary which letter is correct. Don't repeat a question already asked in the conversation. Keep the JSON keys and the answer letter in English.
 - Any other question: answer directly at the length it needs.
 
 Watch line: only when a specific stretch of the transcript directly covers the answer, end with a line starting "Watch:" as a time range in M:SS (or H:MM:SS) from the transcript, plus a short description, e.g. "Watch: 12:33-14:08, derivation of the update rule". Skip it for quiz turns and for answers that come from general knowledge.
@@ -204,7 +208,7 @@ For a topic jump, seek_to the start of the best match from the transcript timest
 
 VOICE_ADDENDUM = """
 
-The student asked out loud and your answer will be read aloud by a text-to-speech voice. Use 1-3 short, conversational sentences, with the direct answer first. No markdown, bullets, numbered lists or bold. Don't spell out symbols or code; say formulas in words. For a quiz question, say the question and its options in one flowing sentence (e.g. "Is it A, ..., B, ..., or C, ...?"). (Any "Watch:" or "Command:" lines are handled by the app, not read aloud, so still include them when relevant.)"""
+The student asked out loud and your answer will be read aloud by a text-to-speech voice. Use 1-3 short, conversational sentences, with the direct answer first. No markdown, bullets, numbered lists or bold. Don't spell out symbols or code; say formulas in words. For a "Quiz:" line, keep the question and options short enough to read aloud; still reply with only the Quiz line. (Any "Watch:", "Command:" or "Quiz:" lines are handled by the app, not read aloud, so still include them when relevant.)"""
 
 HISTORY_TURNS = 10  # earlier chat turns used for follow-ups
 ASK_TEMPERATURE = 0.3  # Gemini: low for consistent, on-format tutor answers
@@ -266,14 +270,90 @@ def transcript_text(captions):
 
 
 def record_question(body, title):
-    """Save a typed question for Hot topics. Chip taps ("Explain what was just said") aren't topics."""
+    """Save a typed question for Hot topics. Chip taps ("Explain what was just said") and quiz answers aren't topics."""
     question = str(body.get("question") or "").strip()
-    if not question or body.get("source") == "chip" or not body.get("lecture_id"):
+    if not question or body.get("source") in ("chip", "quiz_answer") or not body.get("lecture_id"):
         return
     try:
         STORE.add(str(body["lecture_id"]), title, question, body.get("current_time") or 0)
     except Exception as e:  # never let logging break an answer
         print("could not save question:", e)
+
+
+QUIZ_LETTERS = "ABCD"
+
+
+def parse_quiz(reply):
+    """The quiz in a 'Quiz: {...}' reply, validated, or None if the reply isn't a (well-formed) quiz."""
+    text = (reply or "").strip()
+    if text.startswith("```"):  # tolerate a code fence around the line
+        text = text.strip("`").strip()
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+    idx = text.find("Quiz:")
+    if idx < 0:
+        return None
+    raw = text[idx + len("Quiz:"):]
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        data = json.loads(raw[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    kind = data.get("type")
+    question = str(data.get("question") or "").strip()
+    answer = str(data.get("answer") or "").strip()
+    if kind not in ("mcq", "short") or not question or not answer:
+        return None
+    quiz = {
+        "type": kind,
+        "question": question,
+        "options": [],
+        "answer": answer,
+        "explanation": str(data.get("explanation") or "").strip(),
+        "hint": str(data.get("hint") or "").strip(),
+    }
+    if kind == "mcq":
+        options = data.get("options")
+        if not isinstance(options, list) or len(options) != 4 or not all(str(o).strip() for o in options):
+            return None
+        # Drop any "A) " prefixes the model added anyway.
+        quiz["options"] = [re.sub(r"^\s*\(?[A-Da-d][).:]\s+", "", str(o).strip()) for o in options]
+        letter = answer.strip("() .").upper()[:1]
+        if letter not in QUIZ_LETTERS:
+            return None
+        quiz["answer"] = letter
+    return quiz
+
+
+def quiz_text(quiz):
+    """The quiz as plain chat text (kept in history and the notes export)."""
+    lines = [quiz["question"]]
+    lines += [f"{QUIZ_LETTERS[i]}) {o}" for i, o in enumerate(quiz["options"])]
+    return "\n".join(lines)
+
+
+GRADE_ADDENDUM = """
+
+The student is answering this quiz question you asked:
+{question}
+Model answer: {answer}
+{explanation}
+Grade their answer (the new question below is their answer, not a new question). Start with "Correct." or "Not quite." (accept answers that mean the same thing as the model answer, even if worded differently or slightly incomplete), then explain why in 1-2 sentences, giving the model answer if they missed it. No Watch line, no Quiz line, and don't ask a new question."""
+
+
+def ask_response(body):
+    """The /ask response: {"reply"} plus "quiz" and "chips" for quiz turns."""
+    reply = ask(body)
+    if body.get("source") == "quiz_answer":
+        return {"reply": reply, "chips": ["Next question"]}
+    quiz = parse_quiz(reply)
+    if not quiz:
+        return {"reply": reply}
+    return {"reply": quiz_text(quiz), "quiz": quiz, "chips": ["Hint"]}
 
 
 def ask(body):
@@ -295,6 +375,13 @@ def ask(body):
             f"\n\nReply in {language}. Keep the final line exactly in the form "
             '"Watch: M:SS-M:SS, <description>" with the word "Watch:" in English; '
             "the description may be in the reply language."
+        )
+    quiz = body.get("quiz") if body.get("source") == "quiz_answer" else None
+    if isinstance(quiz, dict) and quiz.get("question"):
+        system += GRADE_ADDENDUM.format(
+            question=str(quiz.get("question")),
+            answer=str(quiz.get("answer") or ""),
+            explanation=str(quiz.get("explanation") or ""),
         )
     image = body.get("image") or None
     if image:
@@ -918,7 +1005,7 @@ class Handler(BaseHTTPRequestHandler):
                 print(f"stored {body['lecture_id']} ({len(body.get('captions', []))} cues)")
                 return self._send(200, {"ok": True})
             if self.path == "/ask":
-                return self._send(200, {"reply": ask(body)})
+                return self._send(200, ask_response(body))
             if self.path == "/translate":
                 return self._send(200, translate(body))
             if self.path == "/summary":

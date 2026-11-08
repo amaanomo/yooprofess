@@ -96,7 +96,17 @@ All request and response shapes are in one place: the **"Backend contract"** sec
 { "reply": "Good question. Jump back to 6:18...", "chips": ["Why use a local model?", "Give me an example"] }
 ```
 
-`chips` is optional. When the backend sends it, those chips replace the static ones; otherwise the static ones stay. The reply is shown as plain text: newlines are kept and HTML is not rendered.
+`chips` is optional. When the backend sends it, those chips replace the static ones; otherwise the static ones are shown. The reply is shown as plain text: newlines are kept and HTML is not rendered.
+
+**Quiz turns** ("Quiz me on this", "test me", "Next question") also return a `quiz`:
+
+```json
+{ "reply": "Which loss...\nA) MAE\nB) MSE\n...", "chips": ["Hint"],
+  "quiz": { "type": "mcq", "question": "Which loss...", "options": ["MAE", "MSE", "Hinge", "Cross-entropy"],
+            "answer": "B", "explanation": "...", "hint": "..." } }
+```
+
+Multiple-choice options are shown as buttons and graded in the extension (clicking, typing "b", or saying "bee"), with no server call. `Hint` shows the hint locally. A `"short"` quiz (`options: []`, `answer` = model answer) is graded by sending the student's answer to `/ask` with `"source": "quiz_answer"` and `"quiz": {question, answer, explanation}`. Quiz answers are never logged to Hot topics. There is no Deep Dive button on an open quiz question (it would give the answer away), only on the graded result.
 
 `/ask` also carries an optional `"image"`: one base64 JPEG (max 1024px wide) of the video at the moment of the question, so Nova can read slides and diagrams. It is skipped if the browser blocks reading the frame. Set `SEND_FRAME = false` in `content.js` to turn it off.
 

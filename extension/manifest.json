@@ -1,12 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Nova: Lecture Tutor",
-  "version": "0.1.0",
-  "description": "An AI tutor that follows along with your Panopto lecture. Ask about what was just said.",
-  "permissions": ["storage", "tabs"],
+  "version": "0.2.0",
+  "description": "An AI tutor that follows along with your Panopto lecture. Say \"Hey Nova\" to ask out loud.",
+  "permissions": ["storage", "tabs", "offscreen", "scripting", "alarms", "tts"],
   "host_permissions": ["https://*.panopto.com/*", "http://localhost:8000/*", "https://*.railway.app/*"],
   "background": {
     "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
   "action": {
     "default_title": "Show or hide Nova",
@@ -29,7 +33,7 @@
         "https://*.panopto.com/Panopto/Pages/Viewer.aspx*",
         "https://*.panopto.com/Panopto/Pages/Embed.aspx*"
       ],
-      "js": ["srt.js", "translator.js", "voice.js", "subtitles.js", "overlay.js", "content.js"],
+      "js": ["srt.js", "commands.js", "translator.js", "voice.js", "subtitles.js", "overlay.js", "spotter.js", "voice-client.js", "content.js"],
       "all_frames": true,
       "run_at": "document_start"
     }

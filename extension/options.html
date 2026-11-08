@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nova settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="top">
+        <span class="logo" aria-hidden="true"></span>
+        <div>
+          <h1>Nova settings</h1>
+          <p class="sub">Say <strong>"Hey Nova"</strong> on a Panopto lecture to ask out loud.</p>
+        </div>
+      </header>
+
+      <section class="card">
+        <h2>1. Microphone</h2>
+        <p>Nova listens through one hidden extension page, so you only grant this once (websites never get your mic).</p>
+        <div class="row">
+          <button id="mic-btn" type="button" class="primary">Enable microphone</button>
+          <button id="mic-fix" type="button" hidden>Fix in Chrome settings</button>
+          <span id="mic-status" class="pill">Checking…</span>
+        </div>
+        <p id="mic-help" class="detail" hidden>
+          Chrome is blocking the microphone for Nova, usually after the prompt was dismissed a few times. Click
+          <strong>Fix in Chrome settings</strong>, set <strong>Microphone</strong> to <strong>Allow</strong>, then come back to this page.
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>2. Wake word</h2>
+        <label class="switch-row">
+          <input id="wake-enabled" type="checkbox" />
+          <span>Listen for "Hey Nova" in the background</span>
+        </label>
+        <p>Works out of the box: Nova listens on your Panopto lecture tab while it's open and visible, using Chrome's speech recognition. No key needed. The first time, Chrome asks to allow the microphone for the Panopto site. Click <strong>Allow</strong>. While it's on, Chrome sends what the mic hears to Google's speech service.</p>
+        <details>
+          <summary>Optional: on-device wake word (Picovoice)</summary>
+          <p>For private, on-device detection, add a Picovoice AccessKey and keyword file. Nova uses Picovoice automatically once both are present.</p>
+          <label class="field">
+            <span>Picovoice AccessKey</span>
+            <div class="row">
+              <input id="pv-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your AccessKey" />
+              <button id="pv-save" type="button">Save</button>
+            </div>
+            <small>From <a href="https://console.picovoice.ai/" target="_blank" rel="noopener">console.picovoice.ai</a>. Stays on this computer (not synced).</small>
+          </label>
+          <ol>
+            <li>In the Picovoice Console open <em>Porcupine</em>, type <strong>Hey Nova</strong>, and choose English and <strong>Web (WASM)</strong>. Train it and download it.</li>
+            <li>Save the <code>.ppn</code> file as <code>extension/wake/hey-nova_wasm.ppn</code> and reload the extension.</li>
+          </ol>
+        </details>
+        <div class="row">
+          <span class="label">Status</span>
+          <span id="wake-status" class="pill">Checking…</span>
+        </div>
+        <p id="wake-detail" class="detail"></p>
+      </section>
+
+      <section class="card">
+        <h2>3. Voice</h2>
+        <label class="switch-row">
+          <input id="voice-replies" type="checkbox" />
+          <span>Nova speaks its answers (turn off for text only)</span>
+        </label>
+        <label class="field">
+          <span>Voice engine</span>
+          <select id="engine-select">
+            <option value="chrome">Free: built into Chrome (no key needed)</option>
+            <option value="elevenlabs">ElevenLabs: more natural (needs ELEVENLABS_API_KEY on the server)</option>
+          </select>
+          <small id="engine-hint"></small>
+        </label>
+        <label class="field">
+          <span>Nova's voice</span>
+          <div class="row">
+            <select id="voice-select"></select>
+            <button id="voice-preview" type="button">Preview</button>
+          </div>
+          <small id="voice-hint"></small>
+        </label>
+        <label class="field" id="rate-field">
+          <span>Speaking speed <output id="rate-value"></output></span>
+          <input id="rate" type="range" min="0.7" max="1.6" step="0.05" />
+        </label>
+        <label class="switch-row">
+          <input id="pause-video" type="checkbox" />
+          <span>Pause the lecture video when I say "Hey Nova"</span>
+        </label>
+      </section>
+
+      <p class="footer">"Hey Nova" detection runs on this computer. Your question (the audio after the wake word) is transcribed by Chrome's speech service (free engine) or ElevenLabs. Chrome shows a microphone indicator while Nova is listening.</p>
+    </main>
+    <script src="config.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

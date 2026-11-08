@@ -29,6 +29,11 @@
   .heat { height:4px; background:var(--line); border-radius:4px; margin-top:8px; overflow:hidden; } .heat i { display:block; height:100%; background:linear-gradient(90deg,var(--hot),#fbbf24); }
   .time { color:var(--accent); font-variant-numeric:tabular-nums; font-weight:600; }
   .err { color:#f87171; }
+  .plan h3 { margin:0 0 2px; font-size:16px; } .plan .goal { color:#cfc7e8; margin:4px 0 12px; }
+  .blk { display:flex; gap:14px; padding:10px 0; border-top:1px solid var(--line); }
+  .blk .mins { flex:none; width:74px; color:var(--accent); font-variant-numeric:tabular-nums; font-weight:600; }
+  .blk b { display:block; } .blk i { color:var(--muted); } .blk p { margin:4px 0 0; font-size:14px; color:#cfc7e8; }
+  .ok { color:#4ade80; }
   [hidden] { display:none !important; }
 </style>
 </head>
@@ -50,7 +55,9 @@
       <select id="lectures" aria-label="Lecture"></select>
       <button id="reload">Refresh</button>
       <button id="csv">Export CSV</button>
+      <button id="recit" title="Build a 50-minute TA recitation plan from this lecture's questions and email it">Export recitation plan</button>
     </div>
+    <div id="recitStatus" class="card" role="status" hidden></div>
     <div id="detail"></div>
   </section>
 </main>
@@ -74,10 +81,12 @@
     history.replaceState(null, "", location.pathname + location.search);
   }
 
-  async function api(path) {
-    const res = await fetch(path, { headers: { "X-Instructor-Key": key } });
+  async function api(path, body) {
+    const res = await fetch(path, body
+      ? { method: "POST", headers: { "X-Instructor-Key": key, "Content-Type": "application/json" }, body: JSON.stringify(body) }
+      : { headers: { "X-Instructor-Key": key } });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(data.error || "HTTP " + res.status), { status: res.status });
+    if (!res.ok) throw Object.assign(new Error(data.error || "HTTP " + res.status), { status: res.status, data });
     return data;
   }
 
@@ -117,6 +126,7 @@
 
   async function load() {
     const id = $("lectures").value;
+    $("recitStatus").hidden = true;
     $("detail").replaceChildren(el("div", { className: "card muted", textContent: "Loading…" }));
     try {
       current = await api("/instructor/api/lecture?lecture_id=" + encodeURIComponent(id));
@@ -148,9 +158,43 @@
     document.body.append(a); a.click(); a.remove();
   }
 
+  function planText(p) {
+    let at = 0;
+    const lines = [p.title, p.goal ? "Goal: " + p.goal : ""];
+    for (const b of p.blocks) { lines.push("", `${at}-${at + b.minutes} min  ${b.title}`, "  " + b.activity, "  " + b.details); at += b.minutes; }
+    if (p.ta_notes) lines.push("", "Notes for TAs: " + p.ta_notes);
+    return lines.filter((l, i) => l || i).join("\n");
+  }
+
+  function showPlan(p) {
+    let at = 0;
+    const blocks = p.blocks.map((b) => { const row = el("div", { className: "blk" }, el("div", { className: "mins", textContent: `${at}–${at + b.minutes} min` }),
+      el("div", {}, el("b", { textContent: b.title }), el("i", { textContent: b.activity }), b.details ? el("p", { textContent: b.details }) : null,
+        b.lecture_time != null ? el("p", { className: "muted", textContent: "Rewatch at " + fmt(b.lecture_time) }) : null)); at += b.minutes; return row; });
+    const copy = el("button", { textContent: "Copy as text" });
+    copy.onclick = async () => { try { await navigator.clipboard.writeText(planText(p)); copy.textContent = "Copied"; } catch (_) { copy.textContent = "Copy failed"; } };
+    document.getElementById("planCard")?.remove();
+    $("detail").prepend(el("div", { className: "card plan", id: "planCard" }, el("h3", { textContent: p.title }), p.goal ? el("div", { className: "goal", textContent: p.goal }) : null,
+      ...blocks, p.ta_notes ? el("p", { className: "muted", textContent: "Notes for TAs: " + p.ta_notes }) : null, copy));
+  }
+
+  async function exportRecitation() {
+    const btn = $("recit"), status = $("recitStatus"), id = $("lectures").value;
+    if (!id) return;
+    btn.disabled = true; status.hidden = false; status.className = "card muted"; status.textContent = "Building the plan and emailing it…";
+    try {
+      const out = await api("/instructor/api/recitation", { lecture_id: id });
+      status.className = "card ok"; status.textContent = "Recitation plan sent to " + out.to.join(", ") + ".";
+      showPlan(out.plan);
+    } catch (e) {
+      status.className = "card err"; status.textContent = e.message;
+      if (e.data && e.data.plan) showPlan(e.data.plan); // email failed or isn't set up: the plan is still usable
+    } finally { btn.disabled = false; }
+  }
+
   $("go").onclick = () => { key = $("key").value.trim(); open(); };
   $("key").onkeydown = (e) => { if (e.key === "Enter") $("go").click(); };
-  $("lectures").onchange = load; $("reload").onclick = load; $("csv").onclick = csv;
+  $("lectures").onchange = load; $("reload").onclick = load; $("csv").onclick = csv; $("recit").onclick = exportRecitation;
   if (key) open();
 })();
 </script>

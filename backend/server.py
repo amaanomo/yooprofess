@@ -18,6 +18,7 @@ Endpoints (see the "Backend contract" in extension/content.js):
   POST /summary    summary, key points and timestamped chapters for a lecture
   POST /explain    whiteboard lesson plan
   GET  /instructor instructor dashboard (needs NOVA_INSTRUCTOR_KEY): lectures, themes, question timeline
+  POST /instructor/api/recitation  build a 50-minute recitation plan and email it (see recitation.py for NOVA_SMTP_* and NOVA_RECITATION_EMAIL)
                    POST /topics needs the same key (X-Instructor-Key header): Hot topics is instructor-only
   POST /topics     hot topics: the lecture's most-asked themes (see topics.py; set NOVA_DB_PATH on Railway)
   GET  /voices     ElevenLabs voices (optional voice engine)
@@ -40,6 +41,7 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import recitation
 import topics as hot_topics
 
 PORT = int(os.environ.get("PORT", "8000"))
@@ -135,6 +137,7 @@ def complete(system, user, max_tokens, json_output=False, image_b64=None, histor
 
 INSTRUCTOR_KEY = os.environ.get("NOVA_INSTRUCTOR_KEY", "")  # unset = the instructor dashboard is off
 INSTRUCTOR_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "instructor.html")
+RECITATION_STATE = {"plans": {}, "sent": {}}  # cached plans + per-lecture send times (in memory)
 LECTURES = {}  # lecture_id -> {"title": str, "captions": [...]}
 STORE = hot_topics.QuestionStore()  # anonymous question log for Hot topics (SQLite at NOVA_DB_PATH)
 TRANSLATIONS = {}  # (lecture_id, language_code, cue_index) -> translated text. In memory: lost on restart.
@@ -805,6 +808,17 @@ class Handler(BaseHTTPRequestHandler):
                 content_type = (self.headers.get("Content-Type") or "audio/webm").split(";")[0].strip()
                 return self._send(200, {"text": transcribe(raw, content_type)})
             body = json.loads(raw or b"{}")
+            if self.path == "/instructor/api/recitation":
+                if self._instructor_denied():
+                    return
+                lecture_id = str(body.get("lecture_id") or "")
+                if not lecture_id:
+                    raise BadRequest("lecture_id is required")
+                data = hot_topics.topics({"lecture_id": lecture_id}, STORE, complete)
+                known = next((l for l in STORE.lectures() if l["lecture_id"] == lecture_id), {})
+                title = known.get("title") or (LECTURES.get(lecture_id) or {}).get("title") or ""
+                code, out = recitation.export_plan(lecture_id, title, data, complete, RECITATION_STATE)
+                return self._send(code, out)
             if self.path == "/tts":
                 return self._send_bytes(200, tts(body.get("text"), body.get("voice_id")), "audio/mpeg")
             if self.path == "/lectures":

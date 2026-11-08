@@ -58,6 +58,7 @@ After you edit a file, click the reload icon on Nova's card in `chrome://extensi
 | `PANOPTO_LANGUAGE_IDS` | `content.js` | `{}` | **Unverified.** Panopto's `language=` numbers for professor-uploaded translations. Empty means always use `/translate`. |
 | `BATCH_SIZE`, `CONCURRENCY`, `RETRY_DELAYS_MS`, `LEAD_SECONDS` | `translator.js` | 60, 2, 1 s/3 s, 10 s | Lines per `/translate` call, calls at once, retry backoff, how far before the playhead to start. |
 | `START_WINDOW_S`, `MAX_RATE`, `DUCK_VOLUME`, `SPEECH_CPS` | `voice.js` | 1.5 s, 1.3×, 0.15, per language | Only speak a line within 1.5 s of its start; never speed up past 1.3×; professor's volume in **Lowered** mode (the default, **Muted**, silences them); characters per second used to fit lines. |
+| `SAVE_SHOTS`, `SHOT_MAX_WIDTH`, `SHOT_QUALITY`, `MAX_SHOTS_PER_LECTURE` | `content.js` | true, 480 px, 0.6, 30 | Save a small slide thumbnail with each question so exported notes can show it. Oldest are dropped past the cap. `false` gives text-only notes. |
 | `PANOPTO_CAPTION_SELECTORS`, `BOTTOM_MARGIN` | `subtitles.js` | guesses, 4% | Nova's pill sits near the bottom edge of the video (Panopto draws its own captions in a band below the video). If a caption box is ever drawn over the video, the pill sits 12px above it. |
 | `BACKEND_URL` | `background.js` | `https://yooprofess-production.up.railway.app` | Person 2's server. **If you change it, also update `host_permissions` in `manifest.json`.** |
 | `STUB_MODE` | `background.js` | `false` | `true`: no backend calls. Captions aren't uploaded, and questions get a canned reply that guides instead of answering (it names the timestamp and asks the student something back). `false`: real requests to `BACKEND_URL`. |
@@ -140,6 +141,15 @@ The reply shows as a message with clickable chapters that seek the video. It's s
 - Translation starts where the student is, then fills in the rest. Progress shows on the strip button and in the popover. Lines the server can't translate show the original text, and the popover offers **Retry**.
 - The setting is remembered across lectures; translations are cached per lecture and language.
 
+## Export notes
+
+**⋯ → Export notes (Markdown)** or **Export notes (web page / PDF)** downloads the chat you're in as study notes: the lecture summary, key points and chapters (if you summarized), then every question with Nova's answer, the time you asked it, and a "Watch again" line.
+
+- **Markdown** is plain text for Notion, Obsidian and the like.
+- **Web page / PDF** is one self-contained `.html` file that also embeds the slide screenshot taken when each question was asked. Open it and choose Print, then Save as PDF (or use its button). Nothing is uploaded: the file is built in the browser.
+- Screenshots need the browser to allow reading the video frame (the same condition as vision questions). If it doesn't, the notes are text only.
+- Failed replies and unanswered questions are left out. A second summary replaces the first.
+
 ## What gets stored
 
 All of it is in `chrome.storage.local`, keyed by lecture ID:
@@ -147,6 +157,7 @@ All of it is in `chrome.storage.local`, keyed by lecture ID:
 - `nova:captions:<lecture_id>`: parsed captions, so reloading the page doesn't fetch them again. **⋯ → Reload captions** fetches them fresh.
 - `nova:chat:<lecture_id>`: the chat history, the last 200 messages. **⋯ → Clear chat** deletes it.
 - `nova:translations:<lecture_id>:<language>`: translated subtitle lines, so a lecture is translated once per language.
+- `nova:shots:<lecture_id>`: slide thumbnails for the notes export, newest 30 per lecture. **⋯ → Delete this chat** leaves them to age out.
 - `nova:subtitles`: the chosen language, mode and voice setting (shared across lectures).
 
 To wipe everything, open the extension's service worker console (`chrome://extensions` → Nova → "service worker") and run `chrome.storage.local.clear()`.

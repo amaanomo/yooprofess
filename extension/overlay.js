@@ -158,6 +158,7 @@
    * @param {() => void} opts.onClearChat
    * @param {() => void} opts.onNewChat
    * @param {() => void} opts.onSummarize  "Summarize lecture" picked in the menu
+   * @param {(format: "md"|"html") => void} opts.onExportNotes  "Export notes" picked in the menu
    * @param {(id: string) => void} opts.onSwitchChat
    * @param {(msg: object) => void} opts.onExplain  "Explain in depth" clicked on an Nova reply
    * @param {{code:string,label:string}[]} opts.subtitleLanguages
@@ -188,6 +189,7 @@
         onClearChat() {},
         onNewChat() {},
         onSummarize() {},
+        onExportNotes() {},
         onSwitchChat() {},
         onSeek() {},
         onExplain() {},
@@ -230,6 +232,8 @@
     const newChatItem = menuItem("plus", "New chat", "newchat");
     const summarizeItem = menuItem("list", "Summarize lecture", "summarize");
     summarizeItem.disabled = true;
+    const notesMdItem = menuItem("download", "Export notes (Markdown)", "notes-md");
+    const notesHtmlItem = menuItem("download", "Export notes (web page / PDF)", "notes-html");
     const clearItem = menuItem("trash", "Delete this chat", "clear");
     const chatList = h("div", { class: "menu-chats" });
     const subtitlesItem = menuItem("captions", "Subtitles…", "subtitles");
@@ -241,6 +245,8 @@
       newChatItem,
       chatList,
       summarizeItem,
+      notesMdItem,
+      notesHtmlItem,
       subtitlesItem,
       downloadItem,
       reloadItem,
@@ -579,6 +585,8 @@
       if (item.dataset.action === "clear") o.onClearChat();
       if (item.dataset.action === "newchat") o.onNewChat();
       if (item.dataset.action === "summarize") o.onSummarize();
+      if (item.dataset.action === "notes-md") o.onExportNotes("md");
+      if (item.dataset.action === "notes-html") o.onExportNotes("html");
       if (item.dataset.action === "chat") o.onSwitchChat(item.dataset.id);
       if (item.dataset.action === "subtitles") setPopOpen(true);
     });
@@ -834,7 +842,7 @@
 
       /** The chats saved for this lecture: { activeId, list: [{ id, title, at }] }, newest first. */
       setSessions({ activeId, list }) {
-        const rows = (list || []).slice(0, 8).map((c) => {
+        const rows = (list || []).slice(0, 5).map((c) => {
           const row = h("button", { class: `menu-item menu-chat${c.id === activeId ? " active" : ""}`, type: "button", role: "menuitem", "data-action": "chat", "data-id": c.id }, icon("chat"), h("span", { text: c.title }));
           row.title = new Date(c.at).toLocaleString();
           return row;

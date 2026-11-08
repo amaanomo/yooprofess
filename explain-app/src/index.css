@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  --void: #07080f;
+  --void: #000000;
   --space: #0d0f1c;
   --space-800: #131629;
   --space-700: #1a1f38;

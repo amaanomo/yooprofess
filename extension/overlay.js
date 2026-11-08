@@ -330,7 +330,7 @@
       h(
         "div",
         { class: "voice-main" },
-        h("div", { class: "voice-text" }, h("b", { text: "🔊 Spoken translation" }), voiceNote),
+        h("div", { class: "voice-text" }, h("b", { text: "Spoken translation" }), voiceNote),
         voiceSwitch
       ),
       audioRow
@@ -361,7 +361,6 @@
     const topicsBtn = h(
       "button",
       { class: "topics-btn", type: "button", "aria-label": "Hot topics in this lecture", title: "What students ask about most" },
-      h("span", { class: "topics-flame", "aria-hidden": "true", text: "🔥" }),
       h("span", { text: "Hot topics" })
     );
     const contextStrip = h("div", { class: "context" }, topicsBtn, h("span", { class: "ctx-text" }), subBtn, pop);
@@ -378,7 +377,7 @@
         "div",
         { class: "topics-head" },
         topicsBack,
-        h("h3", { class: "topics-title" }, h("span", { "aria-hidden": "true", text: "🔥 " }), "Hot topics in this lecture"),
+        h("h3", { class: "topics-title" }, "Hot topics in this lecture"),
         topicsSub
       ),
       topicsBody,
@@ -400,7 +399,7 @@
       const parts = [planet()];
       if (!lang) parts.push(h("span", { text: "Subtitles: Off" }));
       else if (translating) parts.push(h("span", { text: shortCode(lang.code) }), progressRing(pct), h("span", { text: `${pct}%` }));
-      else parts.push(h("span", { text: `${shortCode(lang.code)} · ${sub.voice ? "🔊 Voice" : sub.mode === "dual" ? "Dual" : "Translated"}` }));
+      else parts.push(h("span", { text: `${shortCode(lang.code)} · ${sub.voice ? "Voice" : sub.mode === "dual" ? "Dual" : "Translated"}` }));
       parts.push(h("span", { class: "chev", "aria-hidden": "true", text: "▾" }));
       subBtn.replaceChildren(...parts);
       subBtn.setAttribute("aria-label", lang ? `Translated subtitles: ${lang.label}` : "Translated subtitles: off");
